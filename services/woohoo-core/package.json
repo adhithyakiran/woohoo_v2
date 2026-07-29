@@ -1,0 +1,15 @@
+{
+  "name": "@woohoo/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@woohoo/adapter-simulator": "*",
+    "@woohoo/contracts": "*",
+    "@woohoo/otel": "*",
+    "@woohoo/policy": "*",
+    "zod": "^3.24.1"
+  }
+}

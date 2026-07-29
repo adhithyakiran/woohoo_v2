@@ -1,0 +1,99 @@
+# Woohoo V2 — Phase 1 Docker stack (architecture doc §74).
+#
+# Not a throwaway: this is the environment every engineer develops in, the environment CI runs,
+# and the environment an on-premise pilot ships in when a chain insists on it.
+#
+# The services below all run today against in-memory repositories; postgres/redis/nats/minio are
+# provisioned so the Postgres-backed implementations can be swapped in behind the same interfaces
+# without touching the compose topology. See README "What is built vs deferred".
+
+name: woohoo
+
+services:
+  device-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: device-gateway
+    command: ["npm", "run", "gateway"]
+    environment:
+      PORT: "8443"
+      DATABASE_URL: postgres://woohoo:woohoo@postgres:5432/woohoo
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      # Absent by default: the runtime falls back to the deterministic mock provider so the
+      # whole stack works with no credentials. Set to enable the real model.
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
+    ports:
+      - "8443:8443"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    restart: unless-stopped
+
+  edge-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: edge-gateway
+    command: ["npm", "run", "edge"]
+    environment:
+      WOOHOO_PROPERTY_ID: p_blr_whitefield
+    # Deliberately no ports: the edge appliance is outbound-only and opens no inbound
+    # listener anywhere (§9, X3; §40).
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: woohoo
+      POSTGRES_PASSWORD: woohoo
+      POSTGRES_DB: woohoo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U woohoo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--maxmemory-policy", "volatile-ttl"]
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: woohoo
+      MINIO_ROOT_PASSWORD: woohoo123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+
+volumes:
+  pgdata:
+  miniodata:

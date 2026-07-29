@@ -1,0 +1,310 @@
+<h1 class="part"><span class="pn">Part III</span>Device Integration</h1>
+
+<h2>9. What the device owns</h2>
+
+<p>The service deliberately owns as little of the audio path as possible, and the device owns as
+little of the decision path as possible. This split is the point.</p>
+
+<table>
+  <thead><tr><th style="width:30%">Responsibility</th><th style="width:14%">Owner</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Wake word detection</td><td><strong>Device</strong></td><td>Must be local. Audio never leaves the room until the wake phrase fires; a 500&nbsp;ms pre-roll buffer stops the first syllable being clipped, and the buffer is discarded otherwise.</td></tr>
+    <tr><td>Acoustic echo cancellation</td><td><strong>Device</strong></td><td>Must run before the signal leaves the mic path or barge-in is impossible.</td></tr>
+    <tr><td>Voice activity detection &amp; endpointing</td><td><strong>Device</strong></td><td>Signal end-of-turn explicitly rather than letting the cloud wait out a silence timer. Worth 200&ndash;400&nbsp;ms per turn.</td></tr>
+    <tr><td>Speech-to-text</td><td>Cloud <span class="small">(not yet built)</span></td><td>Today the device sends text. When the ASR adapter lands, the device will stream Opus and the gateway will transcribe.</td></tr>
+    <tr><td>Intent, decision, authorisation</td><td><strong>Service</strong></td><td>All of it. The device never decides what an utterance means.</td></tr>
+    <tr><td>Text-to-speech</td><td>Cloud + device cache</td><td>Common phrases (acknowledgements, confirmations) should be pre-synthesised into a device-side phrase pack.</td></tr>
+    <tr><td>Screen rendering</td><td><strong>Device</strong></td><td>Server-driven content; the device renders, never decides.</td></tr>
+    <tr><td>Offline fallback</td><td><strong>Device + edge</strong></td><td>~25-phrase local grammar reaching the on-prem edge gateway over the LAN when the WAN is down.</td></tr>
+  </tbody>
+</table>
+
+<h2>10. Identity and scope</h2>
+
+<p>This is the security model in one page, and it is worth understanding before you write client
+code.</p>
+
+<pre class="ascii">
+  device certificate  ──►  device_id  ──►  catalog.resolveDevice()
+                                                │
+                                                ▼
+                        ┌───────────────────────────────────────────┐
+                        │  scope = { tenantId, propertyId,          │
+                        │            roomId, deviceId }             │
+                        │  + capability manifest for THIS room      │
+                        └───────────────────────────────────────────┘
+                                                │
+       every tool call is executed under this scope, injected server-side.
+       Scope fields present in model output are STRIPPED, never validated.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Do not send a room identifier. There is nowhere to put one.</div>
+  <p>No message in this API accepts a room, property or tenant. No tool schema has a
+  <code>room_id</code> field. This is deliberate: validating a caller-supplied room would mean the
+  field exists, which means it can be populated, which means somebody eventually trusts it for a
+  staff feature. Removing the field removes the class of bug.</p>
+  <p>The practical consequence for you: <strong>a device is bound to exactly one room</strong>. If
+  a device is physically moved during a refurbishment, the binding must be updated in the catalogue
+  or it will confidently control the previous room. The service exposes
+  <code>verifyBinding()</code> for periodic reconciliation against the automation system, and this
+  is a real operational hazard rather than a theoretical one.</p>
+</div>
+
+<h3>10.1 Today versus production</h3>
+<table class="tight">
+  <thead><tr><th style="width:22%">Aspect</th><th style="width:39%">Today (this build)</th><th style="width:39%">Production target</th></tr></thead>
+  <tbody>
+    <tr><td>Device identity</td><td><code>deviceId</code> string in <code>hello</code></td><td>Per-device X.509 certificate, private key held in the Android Keystore / StrongBox and non-exportable</td></tr>
+    <tr><td>Transport</td><td><code>ws://</code></td><td><code>wss://</code> with mTLS, TLS 1.3, certificate pinning plus a documented rotation path</td></tr>
+    <tr><td>Credentials on device</td><td>None</td><td>None &mdash; and this must stay true. A stolen device should yield only a revocable, room-scoped certificate</td></tr>
+    <tr><td>Revocation</td><td><code>revoked</code> flag on the device record</td><td>CRL / OCSP plus immediate connection termination</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">Migrating the existing Android app</div>
+  <p>The current <code>com.sb.woohoo</code> build ships cloud credentials &mdash; a Google
+  service-account path and AWS Polly keys &mdash; and calls Google STT directly over gRPC. The
+  highest-priority change is removing them: today a device stolen from a guest room is a credential
+  compromise, and the credential is not scoped to that room. Replacing the direct gRPC call with
+  this WebSocket removes the credentials <em>and</em> lets you change ASR vendor, model and phrase
+  hints without shipping firmware.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>HTTP Surface</h1>
+
+<p>Same port, same orchestrator, same policy path as the WebSocket. Intended for testing,
+scripting and first-integration work rather than the shipping device.</p>
+
+<h2>11. GET /health</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-get">GET</span> /health</div>
+  <div class="eb">
+    <p>Liveness and connection count. No authentication.</p>
+<pre>$ curl -s http://127.0.0.1:8443/health
+
+{"status":"ok","connections":0,"uptimeS":2}</pre>
+  </div>
+</div>
+
+<h2>12. POST /v1/turn</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-post">POST</span> /v1/turn</div>
+  <div class="eb">
+    <p>Run one complete turn. Body is JSON; maximum 16&nbsp;KB.</p>
+
+    <h4>Request</h4>
+    <table class="tight" style="margin:1mm 0 3mm">
+      <thead><tr><th style="width:20%">Field</th><th style="width:14%">Type</th><th style="width:12%">Required</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">deviceId</td><td>string</td><td>yes</td><td>Resolves to tenant, property, room and capability manifest</td></tr>
+        <tr><td class="mono">transcript</td><td>string</td><td>yes</td><td>The guest utterance, already transcribed</td></tr>
+        <tr><td class="mono">asrConfidence</td><td>number</td><td>no</td><td>0&ndash;1, defaults to 0.95. Below 0.60 routes to the clarify lane</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Response &mdash; a compound request in a Suite</h4>
+<pre>$ curl -s -X POST http://127.0.0.1:8443/v1/turn \
+    -H 'content-type: application/json' \
+    -d '{"deviceId":"d_511a","transcript":"close the curtains and make it warmer"}'
+
+{
+  "turnId": "turn_ms6e6b0a0",
+  "speech": "Curtains closed. I've set it to 22.5 degrees.",
+  "lane": "agentic",
+  "escalated": false,
+  "awaitingConfirmation": false,
+  "degradationLevel": 0,
+  "totalMs": 52,
+  "calls": [
+    { "tool": "curtains.set",           "tier": "T1", "verdict": "ALLOW", "ruleId": "allow", "ok": true },
+    { "tool": "climate.set_temperature","tier": "T1", "verdict": "ALLOW", "ruleId": "allow", "ok": true }
+  ]
+}</pre>
+
+    <h4>Response &mdash; a request policy refused</h4>
+<pre>$ curl -s -X POST http://127.0.0.1:8443/v1/turn \
+    -H 'content-type: application/json' \
+    -d '{"deviceId":"d_412a","transcript":"set the temperature to 35 degrees"}'
+
+{
+  "turnId": "turn_ms6e6b4b1",
+  "speech": "I couldn't do that just now. Would you like me to connect you to the front desk?",
+  "lane": "agentic",
+  "escalated": false,
+  "awaitingConfirmation": false,
+  "degradationLevel": 0,
+  "totalMs": 10,
+  "calls": [
+    { "tool": "climate.set_temperature", "tier": "T1", "verdict": "DENY",
+      "ruleId": "R6.out_of_bounds", "ok": false, "error": "NOT_PERMITTED" }
+  ]
+}</pre>
+    <p class="small">HTTP 200. A policy refusal is a <em>normal outcome</em>, not a transport
+    error. The property permits 18&ndash;26&nbsp;&deg;C and 35 is outside it.</p>
+  </div>
+</div>
+
+<h3>12.1 Response fields</h3>
+<table class="tight">
+  <thead><tr><th style="width:22%">Field</th><th style="width:16%">Type</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turnId</td><td>string</td><td>Identifier for this turn. Use it to correlate with the audit record.</td></tr>
+    <tr><td class="mono">speech</td><td>string</td><td>What to say aloud.</td></tr>
+    <tr><td class="mono">screen</td><td>string?</td><td>Present only when the display carries something the audio does not.</td></tr>
+    <tr><td class="mono">lane</td><td>string</td><td><code>fast</code> | <code>agentic</code> | <code>clarify</code> | <code>confirm</code> | <code>degraded</code>. See &sect;14.</td></tr>
+    <tr><td class="mono">escalated</td><td>boolean</td><td>A human was paged. Your UI should reflect this.</td></tr>
+    <tr><td class="mono">awaitingConfirmation</td><td>boolean</td><td>A chargeable action is frozen and waiting for a spoken yes or no. See &sect;17.</td></tr>
+    <tr><td class="mono">degradationLevel</td><td>number</td><td>0&ndash;5. Non-zero means reduced capability; see &sect;14.1.</td></tr>
+    <tr><td class="mono">totalMs</td><td>number</td><td>Server-side turn duration.</td></tr>
+    <tr><td class="mono">calls[]</td><td>array</td><td>Every tool the agent proposed, with tier, verdict, rule and outcome. Arguments and reasoning are deliberately excluded &mdash; those live in the audit record, not on the wire.</td></tr>
+  </tbody>
+</table>
+
+<h2>13. Status codes</h2>
+<table class="tight">
+  <thead><tr><th style="width:12%">Code</th><th style="width:26%">Body <code>error</code></th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td>200</td><td>&mdash;</td><td>Turn completed. Includes policy denials and refusals.</td></tr>
+    <tr><td>400</td><td class="mono">BAD_REQUEST</td><td>Missing <code>deviceId</code> or <code>transcript</code>, or the body was not valid JSON.</td></tr>
+    <tr><td>404</td><td class="mono">UNKNOWN_DEVICE</td><td>Device unknown, revoked, or its room binding is broken.</td></tr>
+    <tr><td>404</td><td class="mono">NOT_FOUND</td><td>No such route.</td></tr>
+    <tr><td>413</td><td class="mono">PAYLOAD_TOO_LARGE</td><td>Body over 16&nbsp;KB. A transcript is a sentence, not a payload.</td></tr>
+    <tr><td>500</td><td class="mono">TURN_FAILED</td><td>Unhandled internal fault. Should be rare; report it.</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part V</span>Response Semantics</h1>
+
+<h2>14. Lanes</h2>
+
+<p>Every turn takes exactly one lane. The lane explains the latency and the behaviour.</p>
+
+<table>
+  <thead><tr><th style="width:14%">Lane</th><th style="width:16%">Typical</th><th style="width:34%">When</th><th style="width:36%">What it means for you</th></tr></thead>
+  <tbody>
+    <tr><td><strong>fast</strong></td><td>~20&ndash;40&nbsp;ms</td><td>High-confidence match against a curated grammar, all slots filled, single action, tier &le;&nbsp;T2</td><td>No LLM was called at all. Target is 55&ndash;65% of real traffic.</td></tr>
+    <tr><td><strong>agentic</strong></td><td>~40&ndash;900&nbsp;ms<span class="small"> (mock)</span></td><td>Everything else: compound requests, free text, relative changes needing state, questions</td><td>Full reasoning over the tool surface. With real Gemini expect ~1.9&nbsp;s, masked by the filled pause.</td></tr>
+    <tr><td><strong>clarify</strong></td><td>~1&nbsp;ms</td><td>ASR confidence &lt; 0.60, or an ambiguous referent with no session context</td><td>A question was asked, no action taken. <code>calls</code> is empty.</td></tr>
+    <tr><td><strong>confirm</strong></td><td>~1&nbsp;ms</td><td>The previous turn left a frozen chargeable action and this turn is yes or no</td><td>No model involved. The frozen action executes verbatim or is discarded.</td></tr>
+    <tr><td><strong>degraded</strong></td><td>&mdash;</td><td>The service is at degradation level 2 or higher</td><td>Reduced scope. The reply states what still works rather than what is broken.</td></tr>
+  </tbody>
+</table>
+
+<h3>14.1 Degradation levels</h3>
+<table class="tight">
+  <thead><tr><th style="width:10%">Level</th><th style="width:26%">Trigger</th><th>Guest experience</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>Normal</td><td>Full capability</td></tr>
+    <tr><td>1</td><td>LLM slow (p95 &gt; 2.5&nbsp;s)</td><td>Unchanged &mdash; thinking budget capped, fast lane widened</td></tr>
+    <tr><td>2</td><td>LLM errors &gt; 10%</td><td>Fast lane only; the reply names what still works. The route to a human stays open.</td></tr>
+    <tr><td>3</td><td>ASR unavailable</td><td>Screen UI takes over</td></tr>
+    <tr><td>4</td><td>WAN down</td><td>On-device grammar &rarr; edge gateway &rarr; room systems. Lights, climate and DND still work.</td></tr>
+    <tr><td>5</td><td>Edge unreachable too</td><td>Honest failure message pointing at the room phone</td></tr>
+  </tbody>
+</table>
+
+<h2>15. Risk tiers</h2>
+
+<p>Every tool carries a tier. The tier determines what the platform requires before the action
+reaches the world, and it appears on every entry in <code>calls[]</code>.</p>
+
+<table>
+  <thead><tr><th style="width:10%">Tier</th><th style="width:26%">Character</th><th style="width:32%">Requirement</th><th style="width:32%">Examples</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-t0">T0</span></td><td>Read-only</td><td>Scope check. Auto-execute.</td><td><code>room.get_state</code>, <code>stay.get_info</code>, <code>fnb.get_menu</code></td></tr>
+    <tr><td><span class="pill p-t1">T1</span></td><td>Reversible physical</td><td>Scope + capability + bounds. Auto-execute, confirm verbally after.</td><td><code>lighting.set</code>, <code>climate.set_temperature</code>, <code>curtains.set</code>, <code>dnd.set</code></td></tr>
+    <tr><td><span class="pill p-t2">T2</span></td><td>Involves a human</td><td>Scope + duplicate + rate limit. The reply must state exactly what was committed.</td><td><code>service.create_request</code>, <code>stay.set_wakeup_call</code>, <code>staff.connect</code></td></tr>
+    <tr><td><span class="pill p-t3">T3</span></td><td>Money</td><td><strong>Mandatory spoken confirmation in a separate turn</strong>, within 90&nbsp;s, plus spend caps.</td><td><code>fnb.place_order</code></td></tr>
+    <tr><td><span class="pill p-t4">T4</span></td><td>Safety-critical</td><td>Never executed by the agent. It may only <em>raise</em>; a human acts.</td><td><code>staff.escalate_urgent</code></td></tr>
+    <tr><td><span class="pill p-t4">T5</span></td><td>Prohibited</td><td>No tool exists. Cannot be proposed.</td><td>Door locks, safes, remote microphone, any cross-room or bulk action, card handling</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">There is no door-lock tool, at any tier</div>
+  <p>Guests will ask. A voice interface has no reliable speaker authentication and the room is
+  accessible to anyone physically present, so the failure mode is a stranger entering an occupied
+  guest room. No confirmation flow makes that acceptable, because the attacker and the guest are
+  indistinguishable to the device. If it must ever exist it needs a second factor that is not
+  voice &mdash; and it should be that authenticated app, not the voice device, that performs the
+  action.</p>
+</div>
+
+<h2>16. Policy verdicts and rule IDs</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">Verdict</th><th style="width:36%">Meaning</th><th>Your handling</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">ALLOW</td><td>Authorised and executed</td><td>Check <code>ok</code> &mdash; authorisation and execution are different things</td></tr>
+    <tr><td class="mono">CONFIRM</td><td>Frozen, awaiting a spoken yes</td><td><code>awaitingConfirmation</code> is true; next turn should be yes or no</td></tr>
+    <tr><td class="mono">DENY</td><td>Policy refused it</td><td>Normal outcome. Do not retry or rephrase &mdash; the rule will fire again</td></tr>
+    <tr><td class="mono">ESCALATE</td><td>Handed to a human; the agent did not act</td><td><code>escalated</code> is true. Surface it prominently</td></tr>
+  </tbody>
+</table>
+
+<h3>16.1 Rule reference</h3>
+<table class="tight">
+  <thead><tr><th style="width:30%">ruleId</th><th style="width:34%">Fires when</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">allow</td><td>All checks passed</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R1.unknown_tool</td><td>The model invented a tool name</td><td>Also how prohibited (T5) actions are refused &mdash; they have no definition</td></tr>
+    <tr><td class="mono">R2.tool_disabled</td><td>Property disabled the tool by name</td><td>Capability kill switch; propagates in seconds</td></tr>
+    <tr><td class="mono">R2.tier_ceiling</td><td>Above the property's maximum tier</td><td>Read-only mode is <code>ceiling = T0</code>. Does <em>not</em> apply to escalation</td></tr>
+    <tr><td class="mono">R3.no_voice_consent</td><td>Assistant disabled for this stay</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R3.no_preference_consent</td><td>Preference memory not opted into</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R4.escalate_to_human</td><td>Any T4 action</td><td>Always returns ESCALATE, at every degradation level</td></tr>
+    <tr><td class="mono">R5.capability_absent</td><td>Room lacks the capability</td><td>Rare &mdash; the tool is normally filtered out before the model sees it</td></tr>
+    <tr><td class="mono">R6.out_of_bounds</td><td>Temperature outside the property band</td><td>Bounds are property config, not schema</td></tr>
+    <tr><td class="mono">R7.quiet_hours_defer</td><td>Non-urgent request during quiet hours</td><td><strong>An ALLOW.</strong> Annotated with <code>dispatchAt</code>; the guest is told</td></tr>
+    <tr><td class="mono">R8.duplicate_request</td><td>A request in that category is already open</td><td>Returns the existing request ID</td></tr>
+    <tr><td class="mono">R9.turn_rate</td><td>&gt; 30 turns/hour for the device</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R9.actuation_burst</td><td>&ge; 6 actuations in a minute</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R9.climate_churn</td><td>Too many temperature changes in an hour</td><td>Property-configurable</td></tr>
+    <tr><td class="mono">R9.max_open_requests</td><td>Per-stay open-ticket cap reached</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R10.per_order_cap</td><td>Single order over the property cap</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R10.per_stay_cap</td><td>Stay spending cap would be breached</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R11.confirmation_required</td><td>T3 action proposed</td><td>Freezes the action, mints a single-use token</td></tr>
+    <tr><td class="mono">R11.confirmation_redeemed</td><td>Guest said yes</td><td>Executes the frozen action verbatim</td></tr>
+    <tr><td class="mono">gateway.invalid_argument</td><td>Schema validation failed</td><td>Unknown fields are rejected, not ignored</td></tr>
+  </tbody>
+</table>
+
+<h2>17. The confirmation protocol</h2>
+
+<p>The only two-turn flow in the API, and the one most worth implementing carefully.</p>
+
+<pre class="ascii">
+ TURN N                                          TURN N+1
+ ────────────────────────────────────────────    ────────────────────────────────────────────
+ guest: "I'd like a club sandwich"               guest: "yes"
+                                                 lane = "confirm"  (no model involved)
+ → fnb.get_menu          ALLOW                   → validates the single-use token
+ → fnb.place_order       CONFIRM                 → executes the STORED action verbatim
+                                                    (NOT re-derived from this utterance —
+ platform freezes, server-side:                      which is what makes injection useless)
+   { token, tool, args, total, expires: 90s }    → marks the token consumed
+
+ speech: "I have 1 item ready to order.          speech: "Ordered — about 30 minutes.
+          That's 850 INR, charged to your                 850 INR has gone to your room bill."
+          room. Shall I place it?"
+ awaitingConfirmation: true                      awaitingConfirmation: false
+
+                                                 "no" / timeout / anything ambiguous
+                                                 → token discarded, nothing executed,
+                                                   nothing charged, audit records it
+</pre>
+
+<div class="box good">
+  <div class="bt">The property that matters</div>
+  <p>The action executed on confirmation is the action that was <strong>authorised, byte for
+  byte</strong>. The model does not get to reinterpret it. A guest saying "yes" can only ever
+  confirm the frozen pending action or nothing at all &mdash; so an injected instruction in the
+  confirming turn cannot substitute a different order.</p>
+  <p>Client requirements: treat <code>awaitingConfirmation: true</code> as a modal state, always
+  render the <code>screen</code> text carrying the total, and let the guest cancel. Do not
+  auto-confirm, ever.</p>
+</div>

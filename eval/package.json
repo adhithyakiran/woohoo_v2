@@ -1,0 +1,10 @@
+{
+  "name": "@woohoo/eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@woohoo/contracts": "*",
+    "@woohoo/core": "*"
+  }
+}

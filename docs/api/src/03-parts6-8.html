@@ -1,0 +1,347 @@
+<h1 class="part"><span class="pn">Part VI</span>MCP &amp; the Tool Plane</h1>
+
+<h2>18. What MCP means here</h2>
+
+<p>MCP &mdash; the Model Context Protocol &mdash; is how capabilities are exposed <em>to a model</em>.
+In Woohoo it is an <strong>internal</strong> plane. It is not a public API, and you do not call it
+directly: you send a transcript, and the agent decides which tools to propose.</p>
+
+<p>Understanding it still matters to an integrator, because the <code>calls[]</code> array in every
+response <em>is</em> the tool plane's output, and because the tool surface is what determines what
+the assistant can and cannot do in a given room.</p>
+
+<pre class="ascii">
+  AGENT ──── one connection ────► MCP GATEWAY ──┬─► property catalog
+  (proposes only)                               ├─► device state ──► automation adapter ──► BMS
+                                                ├─► service requests
+       ┌────────────────────────────┐           ├─► F&B orders
+       │  the gateway does:         │           ├─► PMS bridge
+       │  · per-room tool filtering │           ├─► knowledge / RAG
+       │  · scope injection         │           ├─► guest preferences
+       │  · argument validation     │           └─► notification / escalation
+       │  · result sanitisation     │
+       │  · error normalisation     │      The agent can NEVER address these directly.
+       │  · caching, audit          │      That is what makes tenant scoping mechanical
+       └────────────────────────────┘      rather than a code-review question.
+</pre>
+
+<h2>19. The MCP gateway</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Responsibility</th><th>What it prevents</th></tr></thead>
+  <tbody>
+    <tr><td>Per-tenant tool filtering</td><td>A property without curtains seeing a curtain tool the model will happily call</td></tr>
+    <tr><td><strong>Scope injection</strong></td><td>Model-supplied room identifiers ever reaching a downstream service &mdash; they are stripped, not validated</td></tr>
+    <tr><td>Argument validation</td><td>Invented fields slipping through; every schema is strict, so unknown keys fail loudly</td></tr>
+    <tr><td>Result sanitisation</td><td>Staff-authored menu text acting as a prompt injection vector</td></tr>
+    <tr><td>Error normalisation</td><td>Raw vendor errors like <code>INNCOM: ERR_0x8004</code> reaching the model, which produces either a hallucinated explanation or a dead-end apology</td></tr>
+    <tr><td>Uniform audit</td><td>Each downstream service logging differently, or not at all</td></tr>
+  </tbody>
+</table>
+
+<h2>20. Complete tool reference</h2>
+
+<p>Twenty-two tools. A given room typically sees 12&ndash;21 after capability filtering. Generated
+from <code>packages/contracts/src/tools.ts</code>.</p>
+
+<table class="tight">
+  <thead><tr>
+    <th style="width:20%">Tool</th><th style="width:6%">Tier</th><th style="width:19%">Requires capability</th>
+    <th style="width:29%">Arguments</th><th style="width:26%">Notes</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="mono">room.get_state</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>Pre-fetched into context on most turns, so it rarely needs calling</td></tr>
+    <tr><td class="mono">lighting.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">lighting.on_off</td><td><code>zone</code>, <code>on?</code>, <code>brightness?</code> 0&ndash;100</td><td>Verify-read. Zone enum narrowed to the room's real zones</td></tr>
+    <tr><td class="mono">climate.set_temperature</td><td><span class="pill p-t1">T1</span></td><td class="mono">climate.setpoint</td><td><code>zone</code>, <code>targetC</code> 10&ndash;35</td><td>Property bounds enforced by the PDP, not the schema</td></tr>
+    <tr><td class="mono">climate.set_mode</td><td><span class="pill p-t1">T1</span></td><td class="mono">climate.mode</td><td><code>zone</code>, <code>mode</code>: auto&nbsp;|&nbsp;cool&nbsp;|&nbsp;heat&nbsp;|&nbsp;fan&nbsp;|&nbsp;off</td><td>Verify-read</td></tr>
+    <tr><td class="mono">curtains.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">curtains.position</td><td><code>zone</code>, <code>position</code> 0&ndash;100</td><td>Binary motors are degraded in the adapter; the model never learns the difference</td></tr>
+    <tr><td class="mono">dnd.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">dnd</td><td><code>state</code>: off&nbsp;|&nbsp;dnd&nbsp;|&nbsp;make_up_room</td><td>Verify-read</td></tr>
+    <tr><td class="mono">tv.control</td><td><span class="pill p-t1">T1</span></td><td class="mono">tv.power_volume_input</td><td><code>power?</code>, <code>volume?</code>, <code>input?</code></td><td>&mdash;</td></tr>
+    <tr><td class="mono">scene.apply</td><td><span class="pill p-t1">T1</span></td><td class="mono">lighting.scene</td><td><code>scene</code></td><td>Scene names come from property config</td></tr>
+    <tr><td class="mono">media.control</td><td><span class="pill p-t1">T1</span></td><td class="mono">media.playback</td><td><code>action</code>: play&nbsp;|&nbsp;pause&nbsp;|&nbsp;next&nbsp;|&nbsp;previous, <code>query?</code></td><td>&mdash;</td></tr>
+    <tr><td class="mono">service.create_request</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>category</code>, <code>subcategory?</code>, <code>description</code>, <code>priority</code></td><td><strong>Not idempotent.</strong> Duplicate-suppressed; deferred during quiet hours</td></tr>
+    <tr><td class="mono">service.get_status</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>This room's open requests only</td></tr>
+    <tr><td class="mono">service.cancel_request</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>requestId</code></td><td>A request belonging to another room is simply "not found"</td></tr>
+    <tr><td class="mono">fnb.get_menu</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><code>category?</code></td><td><strong>Untrusted result</strong> &mdash; staff-authored, fenced before entering context</td></tr>
+    <tr><td class="mono">fnb.place_order</td><td><span class="pill p-t3">T3</span></td><td>&mdash;</td><td><code>items[]</code> (1&ndash;15), <code>deliveryNote?</code></td><td>Confirmation mandatory. Item IDs must come from <code>fnb.get_menu</code></td></tr>
+    <tr><td class="mono">fnb.get_order_status</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>&mdash;</td></tr>
+    <tr><td class="mono">stay.get_info</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>Only ever resolves the stay bound to this room</td></tr>
+    <tr><td class="mono">stay.request_late_checkout</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>requestedTime</code> HH:MM</td><td>Requests, does not grant. The front desk decides</td></tr>
+    <tr><td class="mono">stay.set_wakeup_call</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>action</code>, <code>time?</code> HH:MM</td><td>Time is always read back to the guest</td></tr>
+    <tr><td class="mono">property.search_knowledge</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><code>query</code></td><td><strong>Untrusted result.</strong> Returns citations. The <em>only</em> source of property facts</td></tr>
+    <tr><td class="mono">staff.connect</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>department</code>, <code>reason?</code></td><td>Always reachable, even under a read-only tier ceiling</td></tr>
+    <tr><td class="mono">staff.escalate_urgent</td><td><span class="pill p-t4">T4</span></td><td>&mdash;</td><td><code>category</code>, <code>summary</code></td><td>Never executed by the agent. Always ESCALATE</td></tr>
+    <tr><td class="mono">preferences.set</td><td><span class="pill p-t1">T1</span></td><td>&mdash;</td><td><code>key</code>, <code>value</code></td><td>Absent from the surface unless the guest opted in</td></tr>
+  </tbody>
+</table>
+
+<h3>20.1 Two schemas in full</h3>
+
+<pre>{ <span class="c">// climate.set_temperature — T1</span>
+  "name": "climate.set_temperature",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "zone":    { "type": "string", "enum": ["bedroom","living"] },  <span class="c">// narrowed per room</span>
+      "targetC": { "type": "number", "minimum": 10, "maximum": 35 }
+    },
+    "required": ["zone","targetC"],
+    "additionalProperties": false          <span class="c">// invented fields are REJECTED</span>
+  },
+  "x-woohoo": { "tier":"T1", "idempotent":true, "verifyRead":true, "timeoutMs":2500 }
+}
+
+{ <span class="c">// fnb.place_order — T3, the only chargeable tool</span>
+  "name": "fnb.place_order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "items": { "type":"array", "minItems":1, "maxItems":15, "items": {
+        "type":"object",
+        "properties": {
+          "menuItemId": { "type":"string" },   <span class="c">// MUST come from fnb.get_menu</span>
+          "quantity":   { "type":"integer", "minimum":1, "maximum":10 },
+          "notes":      { "type":"string", "maxLength":200 }
+        },
+        "required": ["menuItemId","quantity"] } },
+      "deliveryNote": { "type":"string", "maxLength":200 }
+    },
+    "required": ["items"],
+    "additionalProperties": false
+  },
+  "x-woohoo": {
+    "tier": "T3",
+    "requiresConfirmation": true,
+    "confirmationMustInclude": ["totalAmount","currency","itemCount"],
+    "spendCapApplies": true,
+    "retry": "never"                       <span class="c">// a duplicate order is a chargeback</span>
+  }
+}</pre>
+
+<h2>21. Tool error envelope</h2>
+
+<p>Every failure the agent sees is normalised into this shape. Errors are written as
+<em>instructions</em>, because a bare code produces an apology and a dead end while a suggestion
+lets the agent recover.</p>
+
+<pre>{
+  "error": "NOT_AVAILABLE",
+  "detail": "This room does not have motorised curtains.",
+  "suggestion": "Tell the guest the curtains are manual. Offer to send housekeeping if they need help.",
+  "retryable": false
+}</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Code</th><th style="width:38%">Meaning</th><th>Retryable</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">NOT_AVAILABLE</td><td>Room lacks the capability, or the item is off the menu</td><td>No</td></tr>
+    <tr><td class="mono">NOT_PERMITTED</td><td>Policy refused it</td><td>No &mdash; and the agent is told not to rephrase</td></tr>
+    <tr><td class="mono">TEMPORARILY_UNREACHABLE</td><td>Head-end or upstream not responding</td><td>Yes</td></tr>
+    <tr><td class="mono">NEEDS_CONFIRMATION</td><td>T3 action needs a separate confirmed turn</td><td>No</td></tr>
+    <tr><td class="mono">INVALID_ARGUMENT</td><td>Schema or bounds violation</td><td>Once, after correction</td></tr>
+    <tr><td class="mono">RATE_LIMITED</td><td>Per-device, per-stay or per-property limit hit</td><td>Later</td></tr>
+    <tr><td class="mono">DUPLICATE</td><td>A request of this kind is already open</td><td>No</td></tr>
+  </tbody>
+</table>
+
+<h2>22. Scope injection</h2>
+
+<p>What the model emits versus what actually executes:</p>
+
+<pre>{ <span class="c">// what the model emitted — note the room_id it invented</span>
+  "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "targetC": 23.0, "room_id": "999" }
+}
+
+{ <span class="c">// what the gateway executed</span>
+  "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "targetC": 23.0 },          <span class="c">// room_id STRIPPED</span>
+  "scope": {                                               <span class="c">// injected from the device identity</span>
+    "tenantId":   "t_demo_apac",
+    "propertyId": "p_blr_whitefield",
+    "roomId":     "r_412",
+    "deviceId":   "d_412a"
+  },
+  "idempotencyKey": "sha256(turn_id | tool | canonical_args)"
+}</pre>
+
+<p><strong>Stripped, not validated.</strong> Any field matching a room, property, tenant or device
+pattern is removed before policy sees the call, and an attempt is recorded as a security signal.</p>
+
+<h1 class="part"><span class="pn">Part VII</span>Capability Model</h1>
+
+<h2>23. How the surface is generated</h2>
+
+<p>The tool list is not fixed. It is <strong>generated per room</strong> from that room's capability
+manifest, which means a capability the room does not have produces no tool &mdash; so the model
+cannot propose it, no runtime check is needed, and no apology is ever generated for an action that
+was never possible.</p>
+
+<pre class="ascii">
+  capability manifest (per ROOM TYPE, with per-room overrides)
+        │
+        ▼
+  toolSurfaceFor(manifest)  ── drops tools whose capability is absent
+        │                   ── narrows zone enums to the room's real zones
+        ▼
+  the tool list the agent is given for THIS turn
+</pre>
+
+<h2>24. Worked example: three rooms</h2>
+
+<p>The same words, three outcomes, entirely from configuration. Verified against the running build:</p>
+
+<table>
+  <thead><tr><th style="width:14%">Device</th><th style="width:12%">Room</th><th style="width:16%">Type</th><th style="width:20%">Curtain capability</th><th style="width:12%">Tools</th><th style="width:26%">"close the curtains"</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>None</td><td><strong>18</strong></td><td>No curtain tool exists &rarr; the assistant explains rather than failing</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td><code>curtains.position</code></td><td><strong>21</strong></td><td>Fast lane, ALLOW, curtains close</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Removed by room override</td><td><strong>20</strong></td><td>No curtain tool &mdash; "motor awaiting replacement"</td></tr>
+  </tbody>
+</table>
+
+<p class="small">Room 512 is a Suite and would normally have curtains; a per-room override removes
+the capability. Overrides can only ever <em>remove</em>, never add &mdash; adding would let a config
+edit widen what the agent can do without a manifest version bump.</p>
+
+<h3>24.1 The Deluxe surface (18 tools)</h3>
+<pre>room.get_state · lighting.set · climate.set_temperature · climate.set_mode · dnd.set
+tv.control · service.create_request · service.get_status · service.cancel_request
+fnb.get_menu · fnb.place_order · fnb.get_order_status · stay.get_info
+stay.request_late_checkout · stay.set_wakeup_call · property.search_knowledge
+staff.connect · staff.escalate_urgent</pre>
+
+<h3>24.2 The Suite surface (21 tools)</h3>
+<pre>… everything above, plus:
+curtains.set · scene.apply · media.control</pre>
+
+<p class="small"><code>preferences.set</code> is absent from both because the demo guests have not
+opted in to preference memory. It appears only with explicit consent.</p>
+
+<h2>25. Property configuration</h2>
+
+<p>Onboarding a property is authoring one document, not writing code. The manifest attaches to
+<strong>room type</strong>, not room: a 300-room property has perhaps eight types, and authoring
+eight manifests with a handful of overrides is a day's work where authoring 300 is a project.</p>
+
+<pre>{
+  "propertyId": "p_blr_whitefield",
+  "timezone": "Asia/Kolkata",
+  "languages": ["en-IN","hi-IN"],
+  "automation": { "vendor": "simulator", "roomRefMapping": "vendor_room_id" },
+  "policy": {
+    "climate":  { "minC": 18, "maxC": 26, "maxChangesPerHour": 6 },
+    "quietHours": { "start": "22:00", "end": "07:00", "deferNonUrgentDispatch": true },
+    "spend": { "perStayCap":  { "amount": 15000, "currency": "INR" },
+               "perOrderCap": { "amount":  6000, "currency": "INR" } },
+    "serviceRequests": { "maxOpen": 10, "maxOpenPerCategory": 3 },
+    "tierCeiling": "T3",              <span class="c">// kill switch: "T0" = read-only mode</span>
+    "disabledTools": []               <span class="c">// per-tool kill switch</span>
+  },
+  "escalation": { "emergencyNumberDisplay": "112", "crisisHelplineDisplay": "+91-…" },
+  "roomTypes": [ { "id": "rt_suite", "capabilityManifest": { … } } ],
+  "roomOverrides": [ { "roomRef": "r_512", "disable": ["curtains.position"] } ]
+}</pre>
+
+<div class="box info">
+  <div class="bt">The vendor room reference is not the room number</div>
+  <p><code>vendorRoomId</code> (e.g. <code>INN-0412</code>) is the automation system's own
+  identifier and is resolved at onboarding. Assuming it equals the hotel room number is a classic
+  integration bug whose symptom is actions landing in the wrong room.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VIII</span>Gaps &amp; Fixtures</h1>
+
+<h2>26. What is not built</h2>
+
+<div class="box warn">
+  <div class="bt">There is no staff or admin API</div>
+  <p>If you are building the staff or admin UI, <strong>there is currently nothing to call</strong>.
+  The domain logic exists and is tested &mdash; listing open requests, acknowledging escalations,
+  searching turn records, authoring manifests, flipping kill switches &mdash; but no HTTP layer is
+  exposed over any of it, and there is no authentication or RBAC.</p>
+  <p>What a UI will need: a staff task API, an admin API for property/room/device and manifest
+  authoring, an ops API for audit search and kill switches, a live event stream (SSE or WebSocket)
+  so a housekeeping tablet buzzes when a ticket lands, and OIDC with per-property RBAC. That last
+  one matters most: the staff API is the <em>only</em> inbound path in the entire design, and
+  tenant-claim validation on every request is the control a chain's penetration test probes first.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Area</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Audio pipeline</td><td>Not built</td><td>No wake word, AEC, VAD, endpointing, Opus, ASR or TTS. The gateway takes transcripts as control frames. Binary frames are reserved but unhandled.</td></tr>
+    <tr><td>Android app changes</td><td>Not started</td><td>The existing app still holds cloud credentials and calls Google STT directly. See &sect;10.</td></tr>
+    <tr><td>Real automation adapters</td><td>Simulator only</td><td>INNCOM, Interel, BACnet and KNX need vendor protocol documentation and lab hardware. The adapter contract they implement is complete.</td></tr>
+    <tr><td>PMS integration</td><td>Not built</td><td><code>stay.get_info</code> reads a seeded local record. No folio posting, no checkout event.</td></tr>
+    <tr><td>Postgres persistence</td><td>Schema only</td><td>Full schema with row-level security exists in <code>db/migrations/</code>; repositories are in-memory. Swapping is a constructor change.</td></tr>
+    <tr><td>Staff / admin API</td><td>Not built</td><td>See the box above.</td></tr>
+    <tr><td>Terraform</td><td>Unapplied</td><td>Written but never <code>plan</code>ed or <code>validate</code>d &mdash; no AWS credentials available.</td></tr>
+    <tr><td>Docker stack</td><td>Unverified</td><td>Compose file written; the Docker daemon was not running during the build. Expect to debug the first <code>make up</code>.</td></tr>
+  </tbody>
+</table>
+
+<h2>27. Demo fixtures</h2>
+
+<p>Seeded automatically on startup. Use these to exercise every path.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Device</th><th style="width:10%">Room</th><th style="width:18%">Type</th><th>Use it to test</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>Capability absence &mdash; curtains, scenes and media are all unavailable</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td>Full capability &mdash; curtains, scenes, media</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Per-room override removing a capability the room type has</td></tr>
+  </tbody>
+</table>
+
+<h3>27.1 Menu</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">ID</th><th style="width:26%">Name</th><th style="width:16%">Price</th><th style="width:22%">Spoken aliases</th><th>Available</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">m_club</td><td>Club Sandwich</td><td>850 INR</td><td>sandwich, club</td><td>yes</td></tr>
+    <tr><td class="mono">m_dosa</td><td>Masala Dosa</td><td>450 INR</td><td>dosa, south indian</td><td>yes</td></tr>
+    <tr><td class="mono">m_beer</td><td>Kingfisher Premium</td><td>390 INR</td><td>beer, lager, kingfisher</td><td>yes</td></tr>
+    <tr><td class="mono">m_caesar</td><td>Caesar Salad</td><td>620 INR</td><td>salad, caesar</td><td><strong>no</strong> &mdash; tests unavailability</td></tr>
+  </tbody>
+</table>
+<p class="small">Aliases exist because a guest ordering "a beer" must not fail just because the menu
+calls it "Kingfisher Premium". They also feed the ASR phrase-hint set.</p>
+
+<h3>27.2 Useful test utterances</h3>
+<table class="tight">
+  <thead><tr><th style="width:44%">Say this</th><th style="width:14%">Expect lane</th><th>Exercises</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turn on the lights</td><td>fast</td><td>Deterministic path, no LLM call</td></tr>
+    <tr><td class="mono">it's freezing in here</td><td>agentic</td><td>Relative change requiring current state (19.5&nbsp;&rarr;&nbsp;22.5&nbsp;&deg;C)</td></tr>
+    <tr><td class="mono">it's too cold and fix the shower</td><td>agentic</td><td>Two intents in one utterance</td></tr>
+    <tr><td class="mono">set the temperature to 35 degrees</td><td>agentic</td><td>DENY on <code>R6.out_of_bounds</code></td></tr>
+    <tr><td class="mono">I'd like a club sandwich and a beer</td><td>agentic</td><td>T3 CONFIRM, total 1240 INR</td></tr>
+    <tr><td class="mono">yes</td><td>confirm</td><td>Redeeming the frozen action</td></tr>
+    <tr><td class="mono">who is staying in room 402</td><td>agentic</td><td>Cross-guest refusal</td></tr>
+    <tr><td class="mono">unlock the door</td><td>agentic</td><td>Prohibited capability &mdash; no tool exists</td></tr>
+    <tr><td class="mono">I'm having chest pain</td><td>agentic</td><td>T4 ESCALATE with emergency-number wording</td></tr>
+    <tr><td class="mono">what time does the pool open</td><td>agentic</td><td>Grounded knowledge retrieval</td></tr>
+  </tbody>
+</table>
+
+<h2>28. Error reference</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Layer</th><th style="width:26%">Code</th><th>Where you see it</th></tr></thead>
+  <tbody>
+    <tr><td>WebSocket</td><td class="mono">NOT_AUTHENTICATED · UNKNOWN_DEVICE · RATE_LIMITED · BAD_FRAME · TURN_FAILED</td><td><code>{"type":"error"}</code> frame</td></tr>
+    <tr><td>HTTP</td><td class="mono">BAD_REQUEST · UNKNOWN_DEVICE · NOT_FOUND · PAYLOAD_TOO_LARGE · TURN_FAILED</td><td>Response body <code>error</code> field with a 4xx/5xx status</td></tr>
+    <tr><td>Tool</td><td class="mono">NOT_AVAILABLE · NOT_PERMITTED · TEMPORARILY_UNREACHABLE · NEEDS_CONFIRMATION · INVALID_ARGUMENT · RATE_LIMITED · DUPLICATE</td><td><code>calls[].error</code>, always with HTTP 200</td></tr>
+    <tr><td>Policy</td><td class="mono">R1&hellip;R11 rule IDs (&sect;16.1)</td><td><code>calls[].ruleId</code> &mdash; tells you <em>why</em>, not just <em>what</em></td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 &mdash; Integration &amp; API Reference &middot; Version 1.0<br>
+Examples captured from a live build. Tool tables generated from <code>packages/contracts/src/tools.ts</code>.<br>
+Companion to the architecture document in <code>docs/architecture/</code>.
+</p>
+
+</body>
+</html>

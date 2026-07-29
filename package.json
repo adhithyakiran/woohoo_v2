@@ -20,9 +20,7 @@
     "eval": "tsx eval/runner/cli.ts",
     "turn": "tsx tools/device-simulator/src/cli.ts",
     "gateway": "tsx services/device-gateway/src/main.ts",
-    "core": "tsx services/woohoo-core/src/main.ts",
-    "edge": "tsx services/edge-gateway/src/main.ts",
-    "seed": "tsx tools/device-simulator/src/seed-dump.ts"
+    "edge": "tsx services/edge-gateway/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -31,6 +29,7 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   }

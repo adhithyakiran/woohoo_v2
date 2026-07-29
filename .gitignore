@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets never live in the repo (§54)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Terraform state contains resource identifiers and must not be committed
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
+
+# Local artefacts
+coverage/
+.vitest/
+*.log
+.DS_Store
+Thumbs.db
+
+# Generated architecture output — the HTML/PDF are build products of docs/architecture/src
+docs/architecture/Woohoo-V2-Architecture.html

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — Integration &amp; API Reference</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:16mm 14mm 15mm 14mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:9.4pt;line-height:1.55;color:var(--ink);margin:0;}
+p{margin:0 0 7pt;}
+strong{font-weight:650;}
+code,kbd{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:8.4pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:21pt;font-weight:300;color:var(--navy);margin:0 0 4mm;padding-bottom:3.5mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:8pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:12.5pt;font-weight:600;color:var(--navy);margin:8mm 0 3mm;padding-left:3.5mm;border-left:3.5px solid var(--accent);page-break-after:avoid;}
+h3{font-size:10.4pt;font-weight:650;color:var(--navy2);margin:6mm 0 2mm;page-break-after:avoid;}
+h4{font-size:9.5pt;font-weight:650;margin:4mm 0 1.5mm;page-break-after:avoid;}
+ul,ol{margin:0 0 7pt;padding-left:16px;} li{margin-bottom:2.6pt;}
+table{width:100%;border-collapse:collapse;margin:3mm 0 6mm;font-size:8.2pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4.5px 6px;font-weight:600;font-size:7.8pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4.5px 6px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+table.tight{font-size:7.7pt;} table.tight td,table.tight th{padding:3.2px 5px;}
+td.mono,.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.7pt;}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);padding:4mm 5mm;margin:4mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2mm;}
+.box p:last-child,.box ul:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+pre{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:7.2pt;line-height:1.42;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3.5mm 4mm;margin:3mm 0 5mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.dark{background:#131c27;color:#cfe0ee;border-color:#131c27;}
+pre.ascii{font-size:6.7pt;line-height:1.3;}
+pre .c{color:#7d94a8;}
+.pill{display:inline-block;font-size:6.8pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.8mm 2mm;border-radius:2.5px;margin-right:2px;}
+.p-t0{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-t1{background:#f0f6ec;color:#4d6b28;border:1px solid #cbdcb9;}
+.p-t2{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.p-t3{background:#fdf0e6;color:#9c4f13;border:1px solid #efc9a5;}
+.p-t4{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.p-get{background:var(--teal-l);color:var(--teal);border:1px solid #a9d5d2;}
+.p-post{background:var(--violet-l);color:var(--violet);border:1px solid #c9b8e6;}
+.p-in{background:#eef4fb;color:#25517f;border:1px solid #bcd3ea;}
+.p-out{background:#f6f0fb;color:#5a3d8c;border:1px solid #d3c2e8;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#0e1b2b 0%,#16283f 45%,#22405f 100%);color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#c9a44e;font-weight:600;}
+.cover h1{font-size:36pt;line-height:1.06;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#e8c87a;}
+.cover .sub{font-size:12pt;color:#b9c8da;margin-top:9mm;font-weight:300;line-height:1.5;max-width:135mm;}
+.cover .rule{width:52mm;height:3px;background:#c9a44e;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.6pt;color:#9fb2c7;display:grid;grid-template-columns:repeat(4,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#e8c87a;font-size:7.4pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 13px;font-size:8pt;color:#dce6f0;margin-right:6px;margin-top:4px;}
+.toc{column-count:2;column-gap:9mm;font-size:8.4pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3.5mm 0 1.2mm;border-bottom:1px solid var(--line);padding-bottom:1mm;break-after:avoid;}
+.toc .ti{color:var(--ink2);margin-bottom:.9mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+.small{font-size:7.8pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:6mm 0;}
+.ep{border:1px solid var(--line);border-radius:4px;margin:4mm 0;page-break-inside:avoid;overflow:hidden;}
+.ep .eh{background:var(--navy);color:#fff;padding:2.5mm 4mm;font-family:"Cascadia Mono",Consolas,monospace;font-size:9pt;font-weight:600;}
+.ep .eb{padding:3.5mm 4mm;}
+.ep .eb p:last-child{margin-bottom:0;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>Integration &amp;<br>API<b>Reference</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    How to talk to the Woohoo V2 agentic voice service &mdash; the device WebSocket protocol,
+    the HTTP surface, the MCP tool plane, and the policy verdicts every integrator will see.
+  </div>
+  <div>
+    <span class="badge">WebSocket</span>
+    <span class="badge">HTTP</span>
+    <span class="badge">MCP tool surface</span>
+    <span class="badge">Risk tiers</span>
+    <span class="badge">Generated from code</span>
+  </div>
+  <div class="meta">
+    <div><b>Document</b>Woohoo V2 API Reference</div>
+    <div><b>Version</b>1.0</div>
+    <div><b>Service</b>device-gateway 0.1.0</div>
+    <div><b>Status</b>Verified against build</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">Front Matter</span>About this document</h1>
+
+<p>This is the integration guide for the Woohoo V2 backend. It documents <strong>what you send, what
+you get back, and what the service does in between</strong>. It is a companion to the
+architecture document in <code>docs/architecture/</code>, which explains <em>why</em> the design is
+shaped this way; section references like &sect;19 point there.</p>
+
+<div class="box good">
+  <div class="bt">Everything here is verified against the running build</div>
+  <p>Every JSON example in this document was produced by executing the request against the service,
+  not written by hand. The tool tables were generated from the TypeScript definitions in
+  <code>packages/contracts/src/tools.ts</code>. If the code and this document disagree, the code is
+  right and this document is stale &mdash; regenerate it.</p>
+</div>
+
+<h3>Who this is for</h3>
+<ul>
+  <li><strong>Android / device engineers</strong> &mdash; Parts II and III. The WebSocket is your path.</li>
+  <li><strong>Anyone testing or scripting</strong> &mdash; Part IV. The HTTP endpoint is curl-able.</li>
+  <li><strong>Anyone extending the agent</strong> &mdash; Parts V and VI. The tool surface and the capability model.</li>
+  <li><strong>UI engineers</strong> &mdash; read Part VIII first. The staff/admin API <em>does not exist yet</em>, and that section says exactly what is missing.</li>
+</ul>
+
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Part I &mdash; Orientation</div>
+  <div class="ti"><b>1</b> The two surfaces, and which to use</div>
+  <div class="ti"><b>2</b> Running the service</div>
+  <div class="ti"><b>3</b> What happens during a turn</div>
+
+  <div class="tp">Part II &mdash; WebSocket Protocol</div>
+  <div class="ti"><b>4</b> Connecting</div>
+  <div class="ti"><b>5</b> Client &rarr; server messages</div>
+  <div class="ti"><b>6</b> Server &rarr; client messages</div>
+  <div class="ti"><b>7</b> A complete session</div>
+  <div class="ti"><b>8</b> Reconnection and liveness</div>
+
+  <div class="tp">Part III &mdash; Device Integration</div>
+  <div class="ti"><b>9</b> What the device owns</div>
+  <div class="ti"><b>10</b> Identity and scope</div>
+
+  <div class="tp">Part IV &mdash; HTTP Surface</div>
+  <div class="ti"><b>11</b> GET /health</div>
+  <div class="ti"><b>12</b> POST /v1/turn</div>
+  <div class="ti"><b>13</b> Status codes</div>
+
+  <div class="tp">Part V &mdash; Response Semantics</div>
+  <div class="ti"><b>14</b> Lanes</div>
+  <div class="ti"><b>15</b> Risk tiers</div>
+  <div class="ti"><b>16</b> Policy verdicts and rule IDs</div>
+  <div class="ti"><b>17</b> The confirmation protocol</div>
+
+  <div class="tp">Part VI &mdash; MCP &amp; the Tool Plane</div>
+  <div class="ti"><b>18</b> What MCP means here</div>
+  <div class="ti"><b>19</b> The MCP gateway</div>
+  <div class="ti"><b>20</b> Complete tool reference</div>
+  <div class="ti"><b>21</b> Tool error envelope</div>
+  <div class="ti"><b>22</b> Scope injection</div>
+
+  <div class="tp">Part VII &mdash; Capability Model</div>
+  <div class="ti"><b>23</b> How the surface is generated</div>
+  <div class="ti"><b>24</b> Worked example: three rooms</div>
+  <div class="ti"><b>25</b> Property configuration</div>
+
+  <div class="tp">Part VIII &mdash; Gaps &amp; Fixtures</div>
+  <div class="ti"><b>26</b> What is not built</div>
+  <div class="ti"><b>27</b> Demo fixtures</div>
+  <div class="ti"><b>28</b> Error reference</div>
+</div>

@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — Integration &amp; API Reference</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:16mm 14mm 15mm 14mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:9.4pt;line-height:1.55;color:var(--ink);margin:0;}
+p{margin:0 0 7pt;}
+strong{font-weight:650;}
+code,kbd{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:8.4pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:21pt;font-weight:300;color:var(--navy);margin:0 0 4mm;padding-bottom:3.5mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:8pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:12.5pt;font-weight:600;color:var(--navy);margin:8mm 0 3mm;padding-left:3.5mm;border-left:3.5px solid var(--accent);page-break-after:avoid;}
+h3{font-size:10.4pt;font-weight:650;color:var(--navy2);margin:6mm 0 2mm;page-break-after:avoid;}
+h4{font-size:9.5pt;font-weight:650;margin:4mm 0 1.5mm;page-break-after:avoid;}
+ul,ol{margin:0 0 7pt;padding-left:16px;} li{margin-bottom:2.6pt;}
+table{width:100%;border-collapse:collapse;margin:3mm 0 6mm;font-size:8.2pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4.5px 6px;font-weight:600;font-size:7.8pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4.5px 6px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+table.tight{font-size:7.7pt;} table.tight td,table.tight th{padding:3.2px 5px;}
+td.mono,.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.7pt;}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);padding:4mm 5mm;margin:4mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2mm;}
+.box p:last-child,.box ul:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+pre{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:7.2pt;line-height:1.42;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3.5mm 4mm;margin:3mm 0 5mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.dark{background:#131c27;color:#cfe0ee;border-color:#131c27;}
+pre.ascii{font-size:6.7pt;line-height:1.3;}
+pre .c{color:#7d94a8;}
+.pill{display:inline-block;font-size:6.8pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.8mm 2mm;border-radius:2.5px;margin-right:2px;}
+.p-t0{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-t1{background:#f0f6ec;color:#4d6b28;border:1px solid #cbdcb9;}
+.p-t2{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.p-t3{background:#fdf0e6;color:#9c4f13;border:1px solid #efc9a5;}
+.p-t4{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.p-get{background:var(--teal-l);color:var(--teal);border:1px solid #a9d5d2;}
+.p-post{background:var(--violet-l);color:var(--violet);border:1px solid #c9b8e6;}
+.p-in{background:#eef4fb;color:#25517f;border:1px solid #bcd3ea;}
+.p-out{background:#f6f0fb;color:#5a3d8c;border:1px solid #d3c2e8;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#0e1b2b 0%,#16283f 45%,#22405f 100%);color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#c9a44e;font-weight:600;}
+.cover h1{font-size:36pt;line-height:1.06;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#e8c87a;}
+.cover .sub{font-size:12pt;color:#b9c8da;margin-top:9mm;font-weight:300;line-height:1.5;max-width:135mm;}
+.cover .rule{width:52mm;height:3px;background:#c9a44e;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.6pt;color:#9fb2c7;display:grid;grid-template-columns:repeat(4,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#e8c87a;font-size:7.4pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 13px;font-size:8pt;color:#dce6f0;margin-right:6px;margin-top:4px;}
+.toc{column-count:2;column-gap:9mm;font-size:8.4pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3.5mm 0 1.2mm;border-bottom:1px solid var(--line);padding-bottom:1mm;break-after:avoid;}
+.toc .ti{color:var(--ink2);margin-bottom:.9mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+.small{font-size:7.8pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:6mm 0;}
+.ep{border:1px solid var(--line);border-radius:4px;margin:4mm 0;page-break-inside:avoid;overflow:hidden;}
+.ep .eh{background:var(--navy);color:#fff;padding:2.5mm 4mm;font-family:"Cascadia Mono",Consolas,monospace;font-size:9pt;font-weight:600;}
+.ep .eb{padding:3.5mm 4mm;}
+.ep .eb p:last-child{margin-bottom:0;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>Integration &amp;<br>API<b>Reference</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    How to talk to the Woohoo V2 agentic voice service &mdash; the device WebSocket protocol,
+    the HTTP surface, the MCP tool plane, and the policy verdicts every integrator will see.
+  </div>
+  <div>
+    <span class="badge">WebSocket</span>
+    <span class="badge">HTTP</span>
+    <span class="badge">MCP tool surface</span>
+    <span class="badge">Risk tiers</span>
+    <span class="badge">Generated from code</span>
+  </div>
+  <div class="meta">
+    <div><b>Document</b>Woohoo V2 API Reference</div>
+    <div><b>Version</b>1.0</div>
+    <div><b>Service</b>device-gateway 0.1.0</div>
+    <div><b>Status</b>Verified against build</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">Front Matter</span>About this document</h1>
+
+<p>This is the integration guide for the Woohoo V2 backend. It documents <strong>what you send, what
+you get back, and what the service does in between</strong>. It is a companion to the
+architecture document in <code>docs/architecture/</code>, which explains <em>why</em> the design is
+shaped this way; section references like &sect;19 point there.</p>
+
+<div class="box good">
+  <div class="bt">Everything here is verified against the running build</div>
+  <p>Every JSON example in this document was produced by executing the request against the service,
+  not written by hand. The tool tables were generated from the TypeScript definitions in
+  <code>packages/contracts/src/tools.ts</code>. If the code and this document disagree, the code is
+  right and this document is stale &mdash; regenerate it.</p>
+</div>
+
+<h3>Who this is for</h3>
+<ul>
+  <li><strong>Android / device engineers</strong> &mdash; Parts II and III. The WebSocket is your path.</li>
+  <li><strong>Anyone testing or scripting</strong> &mdash; Part IV. The HTTP endpoint is curl-able.</li>
+  <li><strong>Anyone extending the agent</strong> &mdash; Parts V and VI. The tool surface and the capability model.</li>
+  <li><strong>UI engineers</strong> &mdash; read Part VIII first. The staff/admin API <em>does not exist yet</em>, and that section says exactly what is missing.</li>
+</ul>
+
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Part I &mdash; Orientation</div>
+  <div class="ti"><b>1</b> The two surfaces, and which to use</div>
+  <div class="ti"><b>2</b> Running the service</div>
+  <div class="ti"><b>3</b> What happens during a turn</div>
+
+  <div class="tp">Part II &mdash; WebSocket Protocol</div>
+  <div class="ti"><b>4</b> Connecting</div>
+  <div class="ti"><b>5</b> Client &rarr; server messages</div>
+  <div class="ti"><b>6</b> Server &rarr; client messages</div>
+  <div class="ti"><b>7</b> A complete session</div>
+  <div class="ti"><b>8</b> Reconnection and liveness</div>
+
+  <div class="tp">Part III &mdash; Device Integration</div>
+  <div class="ti"><b>9</b> What the device owns</div>
+  <div class="ti"><b>10</b> Identity and scope</div>
+
+  <div class="tp">Part IV &mdash; HTTP Surface</div>
+  <div class="ti"><b>11</b> GET /health</div>
+  <div class="ti"><b>12</b> POST /v1/turn</div>
+  <div class="ti"><b>13</b> Status codes</div>
+
+  <div class="tp">Part V &mdash; Response Semantics</div>
+  <div class="ti"><b>14</b> Lanes</div>
+  <div class="ti"><b>15</b> Risk tiers</div>
+  <div class="ti"><b>16</b> Policy verdicts and rule IDs</div>
+  <div class="ti"><b>17</b> The confirmation protocol</div>
+
+  <div class="tp">Part VI &mdash; MCP &amp; the Tool Plane</div>
+  <div class="ti"><b>18</b> What MCP means here</div>
+  <div class="ti"><b>19</b> The MCP gateway</div>
+  <div class="ti"><b>20</b> Complete tool reference</div>
+  <div class="ti"><b>21</b> Tool error envelope</div>
+  <div class="ti"><b>22</b> Scope injection</div>
+
+  <div class="tp">Part VII &mdash; Capability Model</div>
+  <div class="ti"><b>23</b> How the surface is generated</div>
+  <div class="ti"><b>24</b> Worked example: three rooms</div>
+  <div class="ti"><b>25</b> Property configuration</div>
+
+  <div class="tp">Part VIII &mdash; Gaps &amp; Fixtures</div>
+  <div class="ti"><b>26</b> What is not built</div>
+  <div class="ti"><b>27</b> Demo fixtures</div>
+  <div class="ti"><b>28</b> Error reference</div>
+</div>
+
+<h1 class="part"><span class="pn">Part I</span>Orientation</h1>
+
+<h2>1. The two surfaces, and which to use</h2>
+
+<p>The service exposes exactly two network surfaces, both on <strong>one port</strong> (8443 by
+default). Hotel networks pass 443 and little else, so asking for a second port means asking for a
+firewall change nobody will make (&sect;22).</p>
+
+<table>
+  <thead><tr><th style="width:16%">Surface</th><th style="width:26%">Use it for</th><th style="width:32%">Why</th><th style="width:26%">Do not use it for</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>WebSocket</strong><br><code class="mono">ws://host:8443/</code></td>
+      <td>The production device path. The Woohoo hub in the guest room.</td>
+      <td>A TLS handshake per turn costs 200&ndash;400&nbsp;ms against a 1,100&nbsp;ms p50 budget. Only a persistent connection can carry server-initiated pushes &mdash; screen updates and late BMS confirmations that arrive after the assistant has already spoken.</td>
+      <td>Scripting and one-off tests. It is more setup than you need.</td>
+    </tr>
+    <tr>
+      <td><strong>HTTP</strong><br><code class="mono">POST /v1/turn</code></td>
+      <td>Testing, curl, CI checks, a first integration spike, any non-voice caller.</td>
+      <td>Request/response is trivial to call from anything. It runs the <em>identical</em> orchestrator path, so behaviour cannot drift between the two.</td>
+      <td>The shipping device. You lose the filled pause, barge-in and server push.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">If you only read one thing</div>
+  <p>Both surfaces take <strong>a device ID and a transcript</strong>. Neither takes a room number,
+  a property ID or a tenant. Those are derived server-side from the device identity and cannot be
+  supplied by the caller &mdash; that is the single most important property of this API and the
+  reason a compromised or confused client cannot reach another guest's room.</p>
+</div>
+
+<h2>2. Running the service</h2>
+
+<pre>npm install
+npm run gateway          <span class="c"># WebSocket + HTTP on :8443</span>
+
+<span class="c"># no API key, no Docker, no database required —
+# in-memory stores and a deterministic mock LLM by default.
+# set GOOGLE_API_KEY to switch to real Gemini.</span></pre>
+
+<p>Two other entry points are useful while integrating:</p>
+
+<pre>npm run turn -- "turn on the lights"     <span class="c"># one-shot, prints lane / verdicts / trace</span>
+npm run turn                             <span class="c"># interactive REPL, session persists</span>
+npm run turn -- --trace "it's freezing"  <span class="c"># full per-turn span tree</span></pre>
+
+<h2>3. What happens during a turn</h2>
+
+<p>Between your request and the reply, this runs. Understanding it explains most of the fields you
+get back.</p>
+
+<pre class="ascii">
+  your request  { deviceId, transcript }
+        │
+        ▼
+  ① IDENTITY      device_id ──► { tenant, property, room } + capability manifest
+                  Cached. This is the ONLY place scope is created, and it comes from the
+                  device record — never from your payload.
+        │
+        ▼
+  ② REDACTION     card numbers blocked outright; emails, IDs and names masked before the
+                  transcript reaches the model or the audit store.
+        │
+        ▼
+  ③ PRE-FETCH     room state · open tickets · stay context · preferences — all in parallel.
+                  This removes a whole tool round-trip from most turns.
+        │
+        ▼
+  ④ TOOL SURFACE  generated from THIS room's capability manifest. A room without curtains
+                  has no curtain tool, so the agent cannot propose one.
+        │
+        ▼
+  ⑤ ROUTER        fast · agentic · clarify · confirm      (see §14)
+        │
+        ▼
+  ⑥ AGENT         Gemini (or the mock) proposes zero or more tool calls.
+        │
+        ▼
+  ── for EVERY proposed call ──────────────────────────────────────────────
+  ⑦ VALIDATE      against the tool's schema; unknown fields are rejected, not ignored
+  ⑧ SCOPE         model-supplied room/property/tenant fields are STRIPPED, real scope injected
+  ⑨ PRICE         monetary effect computed by the platform, never taken from the model
+  ⑩ POLICY        the PDP returns ALLOW / CONFIRM / DENY / ESCALATE      (see §16)
+  ⑪ AUDIT         the verdict is written BEFORE execution, so a crash still leaves evidence
+  ⑫ EXECUTE       MCP gateway ─► domain module ─► automation adapter ─► the room
+  ⑬ VERIFY        read the state back. "Done" is only said when it is observed done.
+  ─────────────────────────────────────────────────────────────────────────
+        │
+        ▼
+  ⑭ COMPOSE       templated where the outcome fits a known shape; model text otherwise
+  ⑮ GUARD         no other-room references, no prompt leakage, length capped
+  ⑯ SEAL          immutable turn record + turn.completed event
+        │
+        ▼
+  reply  { speech, screen?, lane, calls[], ... }
+</pre>
+
+<div class="box info">
+  <div class="bt">Why step ⑩ matters to you as an integrator</div>
+  <p>The model <em>proposes</em>; the platform <em>disposes</em>. A tool call appearing in the
+  <code>calls</code> array does not mean it ran &mdash; check <code>verdict</code> and
+  <code>ok</code>. A <code>DENY</code> is a normal, expected outcome, not an error, and the
+  <code>ruleId</code> tells you which rule fired.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part II</span>WebSocket Protocol</h1>
+
+<h2>4. Connecting</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Property</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>URL</td><td><code>ws://host:8443/</code> &mdash; <code>wss://</code> in any deployed environment</td></tr>
+    <tr><td>Subprotocol</td><td>None</td></tr>
+    <tr><td>Framing</td><td><strong>Text frames</strong> carry JSON control messages. Binary frames are reserved for Opus audio and are not yet handled.</td></tr>
+    <tr><td>Encoding</td><td>UTF-8 JSON, one message per frame</td></tr>
+    <tr><td>Lifetime</td><td><strong>One persistent connection per device</strong>, kept warm. Do not open a connection per turn.</td></tr>
+    <tr><td>Auth (today)</td><td><code>deviceId</code> in the <code>hello</code> frame</td></tr>
+    <tr><td>Auth (production)</td><td>mTLS client certificate; the device ID comes from the certificate subject and the <code>hello</code> field is ignored. See &sect;10.</td></tr>
+  </tbody>
+</table>
+
+<p>The first frame you send <strong>must</strong> be <code>hello</code>. Any other frame before it
+is rejected with <code>NOT_AUTHENTICATED</code>.</p>
+
+<h2>5. Client &rarr; server messages</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-in">send</span> hello</div>
+  <div class="eb">
+    <p>Establishes identity. Must be first. The server resolves the device to its property, room
+    and capability manifest, and replies <code>ready</code> or closes the socket.</p>
+<pre>{ "type": "hello",
+  "deviceId": "d_412a",           <span class="c">// required</span>
+  "firmware": "2.4.1",            <span class="c">// optional, for fleet telemetry</span>
+  "certificateSerial": "cert_..." <span class="c">// optional today; authoritative under mTLS</span>
+}</pre>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-in">send</span> turn</div>
+  <div class="eb">
+    <p>One guest utterance, already transcribed. This is the main message.</p>
+<pre>{ "type": "turn",
+  "transcript": "close the curtains and make it warmer",
+  "asrConfidence": 0.94          <span class="c">// 0–1, optional, defaults to 0.95</span>
+}</pre>
+    <p><code>asrConfidence</code> is not decorative: below <strong>0.60</strong> the router sends
+    the turn to the clarify lane and asks the guest to repeat rather than guessing at an action.
+    Below <strong>0.85</strong> the deterministic fast path is disabled. Pass a real value from your
+    ASR engine.</p>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-in">send</span> barge_in</div>
+  <div class="eb">
+    <p>The guest started speaking while the assistant was talking. Accepted and reserved; playback
+    control is currently the device's responsibility.</p>
+<pre>{ "type": "barge_in" }</pre>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-in">send</span> health</div>
+  <div class="eb">
+    <p>Device telemetry. Accepted on this channel for the single-process dev stack; in production
+    it moves to a separate MQTT channel so telemetry backpressure can never reach the voice path.</p>
+<pre>{ "type": "health", "rssi": -58, "wakeFalseAccepts": 3 }</pre>
+    <p class="small">A rising <code>wakeFalseAccepts</code> count usually means the device is next to a television.</p>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-in">send</span> ping</div>
+  <div class="eb">
+    <p>Application-level liveness check. Answered with <code>pong</code>. Independent of the
+    WebSocket protocol-level ping the server sends every 30 seconds.</p>
+<pre>{ "type": "ping" }</pre>
+  </div>
+</div>
+
+<h2>6. Server &rarr; client messages</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> ready</div>
+  <div class="eb">
+    <p>Identity accepted. Everything here is derived from the device record.</p>
+<pre>{ "type": "ready",
+  "property": "Demo Hotel Whitefield",
+  "room": "511",
+  "assistantName": "Voice Genie",
+  "phrasePackVersion": "mock-voice-en-in@en-IN"
+}</pre>
+    <p>Use <code>assistantName</code> for on-screen branding and <code>phrasePackVersion</code> to
+    decide whether your cached audio phrase pack needs refreshing.</p>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> ack</div>
+  <div class="eb">
+    <p><strong>Arrives before the answer.</strong> Play this immediately from your cached phrase
+    pack &mdash; it is the filled pause that keeps perceived latency near 600&nbsp;ms even when the
+    reasoning path takes longer.</p>
+<pre>{ "type": "ack", "filledPause": "Let me sort that—" }</pre>
+    <p>The phrase rotates through six variants per language. A device that says the same three
+    words every time sounds broken within a day.</p>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> speak</div>
+  <div class="eb">
+    <p>The spoken reply. Synthesise and play. Always under about 45 words by design.</p>
+<pre>{ "type": "speak",
+  "text": "Curtains closed. I've set it to 22.5 degrees.",
+  "turnId": "turn_ms6dstty0"
+}</pre>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> screen</div>
+  <div class="eb">
+    <p>Optional. Text for the device display, sent when the visual channel carries something the
+    audio does not &mdash; an order total, an emergency number, evacuation guidance.</p>
+<pre>{ "type": "screen", "text": "Emergency: 112\nHotel team alerted" }</pre>
+    <div class="box warn" style="margin:3mm 0 0">
+      <div class="bt">Accessibility</div>
+      <p>Render this. Voice must never be the only path: guests who are deaf, hard of hearing or
+      non-verbal need every function reachable on screen, and in an emergency the screen works
+      when speech does not.</p>
+    </div>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> error</div>
+  <div class="eb">
+<pre>{ "type": "error", "code": "RATE_LIMITED", "detail": "Too many requests from this device..." }</pre>
+    <table class="tight" style="margin:2mm 0 0">
+      <thead><tr><th style="width:26%">code</th><th style="width:38%">Meaning</th><th>What the device should do</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">NOT_AUTHENTICATED</td><td>A frame arrived before <code>hello</code></td><td>Send <code>hello</code>, then retry</td></tr>
+        <tr><td class="mono">UNKNOWN_DEVICE</td><td>Device unknown, revoked, or its room binding is broken</td><td>Socket is closed. Do not retry in a loop &mdash; surface a provisioning error</td></tr>
+        <tr><td class="mono">RATE_LIMITED</td><td>More than 30 turns from this device in an hour</td><td>Back off; tell the guest to try shortly</td></tr>
+        <tr><td class="mono">BAD_FRAME</td><td>Frame was not valid JSON</td><td>Fix the client</td></tr>
+        <tr><td class="mono">TURN_FAILED</td><td>The turn threw internally</td><td>Say something honest; offer the front desk</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-out">receive</span> pong</div>
+  <div class="eb"><pre>{ "type": "pong" }</pre></div>
+</div>
+
+<h2>7. A complete session</h2>
+
+<p>Captured from a live run against <code>d_511a</code> (room 511, a Suite). Nothing is edited.</p>
+
+<pre class="dark">--> {"type":"hello","deviceId":"d_511a","firmware":"2.4.1"}
+&lt;-- {"type":"ready","property":"Demo Hotel Whitefield","room":"511",
+     "assistantName":"Voice Genie","phrasePackVersion":"mock-voice-en-in@en-IN"}
+
+<span class="c">// compound request: two intents, one utterance</span>
+--> {"type":"turn","transcript":"close the curtains and make it warmer","asrConfidence":0.94}
+&lt;-- {"type":"ack","filledPause":"Let me sort that—"}
+&lt;-- {"type":"speak","text":"Curtains closed. I've set it to 22.5 degrees.","turnId":"turn_ms6dstty0"}
+
+<span class="c">// chargeable action: the total is stated and consent is asked for — nothing is ordered yet</span>
+--> {"type":"turn","transcript":"I'd like a club sandwich","asrConfidence":0.96}
+&lt;-- {"type":"ack","filledPause":"One second—"}
+&lt;-- {"type":"speak","text":"I have 1 item ready to order. That's 850 INR, charged to your room.
+                            Shall I place it?","turnId":"turn_ms6dsugd1"}
+&lt;-- {"type":"screen","text":"I have 1 item ready to order. That's 850 INR, charged to your room."}
+
+<span class="c">// the confirming turn executes the FROZEN action, byte for byte</span>
+--> {"type":"turn","transcript":"yes","asrConfidence":0.99}
+&lt;-- {"type":"ack","filledPause":"On it—"}
+&lt;-- {"type":"speak","text":"Ordered — about 30 minutes. 850 INR has gone to your room bill."}</pre>
+
+<p>Note the shape of the exchange: <strong>one <code>turn</code> in, one <code>ack</code> plus one
+<code>speak</code> out</strong>, with an optional <code>screen</code>. There is no correlation ID
+on the request &mdash; the connection is per-device and turns are serialised, so the
+<code>turnId</code> on the response is the identifier you log against.</p>
+
+<h2>8. Reconnection and liveness</h2>
+
+<ul>
+  <li>The server sends a protocol-level <strong>ping every 30&nbsp;s</strong> and terminates a
+  connection that misses two. Your client must answer pongs; most WebSocket libraries do this
+  automatically.</li>
+  <li>On disconnect, reconnect with <strong>exponential backoff and full jitter</strong>,
+  1&nbsp;s&nbsp;&rarr;&nbsp;60&nbsp;s cap. <strong>The jitter is mandatory.</strong> Without it a
+  property-wide network blip becomes a synchronised reconnect storm from 300 devices, and you will
+  have caused your own outage.</li>
+  <li>After reconnecting you must send <code>hello</code> again. Session state (conversation
+  history, a pending confirmation) survives on the server for <strong>30 minutes</strong> keyed on
+  the room, so a brief drop mid-conversation does not lose context.</li>
+  <li>A pending T3 confirmation expires after <strong>90 seconds</strong> regardless of connection
+  state. If the guest reconnects after that and says "yes", they are told the confirmation expired
+  and nothing is charged.</li>
+</ul>
+
+<h1 class="part"><span class="pn">Part III</span>Device Integration</h1>
+
+<h2>9. What the device owns</h2>
+
+<p>The service deliberately owns as little of the audio path as possible, and the device owns as
+little of the decision path as possible. This split is the point.</p>
+
+<table>
+  <thead><tr><th style="width:30%">Responsibility</th><th style="width:14%">Owner</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Wake word detection</td><td><strong>Device</strong></td><td>Must be local. Audio never leaves the room until the wake phrase fires; a 500&nbsp;ms pre-roll buffer stops the first syllable being clipped, and the buffer is discarded otherwise.</td></tr>
+    <tr><td>Acoustic echo cancellation</td><td><strong>Device</strong></td><td>Must run before the signal leaves the mic path or barge-in is impossible.</td></tr>
+    <tr><td>Voice activity detection &amp; endpointing</td><td><strong>Device</strong></td><td>Signal end-of-turn explicitly rather than letting the cloud wait out a silence timer. Worth 200&ndash;400&nbsp;ms per turn.</td></tr>
+    <tr><td>Speech-to-text</td><td>Cloud <span class="small">(not yet built)</span></td><td>Today the device sends text. When the ASR adapter lands, the device will stream Opus and the gateway will transcribe.</td></tr>
+    <tr><td>Intent, decision, authorisation</td><td><strong>Service</strong></td><td>All of it. The device never decides what an utterance means.</td></tr>
+    <tr><td>Text-to-speech</td><td>Cloud + device cache</td><td>Common phrases (acknowledgements, confirmations) should be pre-synthesised into a device-side phrase pack.</td></tr>
+    <tr><td>Screen rendering</td><td><strong>Device</strong></td><td>Server-driven content; the device renders, never decides.</td></tr>
+    <tr><td>Offline fallback</td><td><strong>Device + edge</strong></td><td>~25-phrase local grammar reaching the on-prem edge gateway over the LAN when the WAN is down.</td></tr>
+  </tbody>
+</table>
+
+<h2>10. Identity and scope</h2>
+
+<p>This is the security model in one page, and it is worth understanding before you write client
+code.</p>
+
+<pre class="ascii">
+  device certificate  ──►  device_id  ──►  catalog.resolveDevice()
+                                                │
+                                                ▼
+                        ┌───────────────────────────────────────────┐
+                        │  scope = { tenantId, propertyId,          │
+                        │            roomId, deviceId }             │
+                        │  + capability manifest for THIS room      │
+                        └───────────────────────────────────────────┘
+                                                │
+       every tool call is executed under this scope, injected server-side.
+       Scope fields present in model output are STRIPPED, never validated.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Do not send a room identifier. There is nowhere to put one.</div>
+  <p>No message in this API accepts a room, property or tenant. No tool schema has a
+  <code>room_id</code> field. This is deliberate: validating a caller-supplied room would mean the
+  field exists, which means it can be populated, which means somebody eventually trusts it for a
+  staff feature. Removing the field removes the class of bug.</p>
+  <p>The practical consequence for you: <strong>a device is bound to exactly one room</strong>. If
+  a device is physically moved during a refurbishment, the binding must be updated in the catalogue
+  or it will confidently control the previous room. The service exposes
+  <code>verifyBinding()</code> for periodic reconciliation against the automation system, and this
+  is a real operational hazard rather than a theoretical one.</p>
+</div>
+
+<h3>10.1 Today versus production</h3>
+<table class="tight">
+  <thead><tr><th style="width:22%">Aspect</th><th style="width:39%">Today (this build)</th><th style="width:39%">Production target</th></tr></thead>
+  <tbody>
+    <tr><td>Device identity</td><td><code>deviceId</code> string in <code>hello</code></td><td>Per-device X.509 certificate, private key held in the Android Keystore / StrongBox and non-exportable</td></tr>
+    <tr><td>Transport</td><td><code>ws://</code></td><td><code>wss://</code> with mTLS, TLS 1.3, certificate pinning plus a documented rotation path</td></tr>
+    <tr><td>Credentials on device</td><td>None</td><td>None &mdash; and this must stay true. A stolen device should yield only a revocable, room-scoped certificate</td></tr>
+    <tr><td>Revocation</td><td><code>revoked</code> flag on the device record</td><td>CRL / OCSP plus immediate connection termination</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">Migrating the existing Android app</div>
+  <p>The current <code>com.sb.woohoo</code> build ships cloud credentials &mdash; a Google
+  service-account path and AWS Polly keys &mdash; and calls Google STT directly over gRPC. The
+  highest-priority change is removing them: today a device stolen from a guest room is a credential
+  compromise, and the credential is not scoped to that room. Replacing the direct gRPC call with
+  this WebSocket removes the credentials <em>and</em> lets you change ASR vendor, model and phrase
+  hints without shipping firmware.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>HTTP Surface</h1>
+
+<p>Same port, same orchestrator, same policy path as the WebSocket. Intended for testing,
+scripting and first-integration work rather than the shipping device.</p>
+
+<h2>11. GET /health</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-get">GET</span> /health</div>
+  <div class="eb">
+    <p>Liveness and connection count. No authentication.</p>
+<pre>$ curl -s http://127.0.0.1:8443/health
+
+{"status":"ok","connections":0,"uptimeS":2}</pre>
+  </div>
+</div>
+
+<h2>12. POST /v1/turn</h2>
+
+<div class="ep">
+  <div class="eh"><span class="pill p-post">POST</span> /v1/turn</div>
+  <div class="eb">
+    <p>Run one complete turn. Body is JSON; maximum 16&nbsp;KB.</p>
+
+    <h4>Request</h4>
+    <table class="tight" style="margin:1mm 0 3mm">
+      <thead><tr><th style="width:20%">Field</th><th style="width:14%">Type</th><th style="width:12%">Required</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">deviceId</td><td>string</td><td>yes</td><td>Resolves to tenant, property, room and capability manifest</td></tr>
+        <tr><td class="mono">transcript</td><td>string</td><td>yes</td><td>The guest utterance, already transcribed</td></tr>
+        <tr><td class="mono">asrConfidence</td><td>number</td><td>no</td><td>0&ndash;1, defaults to 0.95. Below 0.60 routes to the clarify lane</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Response &mdash; a compound request in a Suite</h4>
+<pre>$ curl -s -X POST http://127.0.0.1:8443/v1/turn \
+    -H 'content-type: application/json' \
+    -d '{"deviceId":"d_511a","transcript":"close the curtains and make it warmer"}'
+
+{
+  "turnId": "turn_ms6e6b0a0",
+  "speech": "Curtains closed. I've set it to 22.5 degrees.",
+  "lane": "agentic",
+  "escalated": false,
+  "awaitingConfirmation": false,
+  "degradationLevel": 0,
+  "totalMs": 52,
+  "calls": [
+    { "tool": "curtains.set",           "tier": "T1", "verdict": "ALLOW", "ruleId": "allow", "ok": true },
+    { "tool": "climate.set_temperature","tier": "T1", "verdict": "ALLOW", "ruleId": "allow", "ok": true }
+  ]
+}</pre>
+
+    <h4>Response &mdash; a request policy refused</h4>
+<pre>$ curl -s -X POST http://127.0.0.1:8443/v1/turn \
+    -H 'content-type: application/json' \
+    -d '{"deviceId":"d_412a","transcript":"set the temperature to 35 degrees"}'
+
+{
+  "turnId": "turn_ms6e6b4b1",
+  "speech": "I couldn't do that just now. Would you like me to connect you to the front desk?",
+  "lane": "agentic",
+  "escalated": false,
+  "awaitingConfirmation": false,
+  "degradationLevel": 0,
+  "totalMs": 10,
+  "calls": [
+    { "tool": "climate.set_temperature", "tier": "T1", "verdict": "DENY",
+      "ruleId": "R6.out_of_bounds", "ok": false, "error": "NOT_PERMITTED" }
+  ]
+}</pre>
+    <p class="small">HTTP 200. A policy refusal is a <em>normal outcome</em>, not a transport
+    error. The property permits 18&ndash;26&nbsp;&deg;C and 35 is outside it.</p>
+  </div>
+</div>
+
+<h3>12.1 Response fields</h3>
+<table class="tight">
+  <thead><tr><th style="width:22%">Field</th><th style="width:16%">Type</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turnId</td><td>string</td><td>Identifier for this turn. Use it to correlate with the audit record.</td></tr>
+    <tr><td class="mono">speech</td><td>string</td><td>What to say aloud.</td></tr>
+    <tr><td class="mono">screen</td><td>string?</td><td>Present only when the display carries something the audio does not.</td></tr>
+    <tr><td class="mono">lane</td><td>string</td><td><code>fast</code> | <code>agentic</code> | <code>clarify</code> | <code>confirm</code> | <code>degraded</code>. See &sect;14.</td></tr>
+    <tr><td class="mono">escalated</td><td>boolean</td><td>A human was paged. Your UI should reflect this.</td></tr>
+    <tr><td class="mono">awaitingConfirmation</td><td>boolean</td><td>A chargeable action is frozen and waiting for a spoken yes or no. See &sect;17.</td></tr>
+    <tr><td class="mono">degradationLevel</td><td>number</td><td>0&ndash;5. Non-zero means reduced capability; see &sect;14.1.</td></tr>
+    <tr><td class="mono">totalMs</td><td>number</td><td>Server-side turn duration.</td></tr>
+    <tr><td class="mono">calls[]</td><td>array</td><td>Every tool the agent proposed, with tier, verdict, rule and outcome. Arguments and reasoning are deliberately excluded &mdash; those live in the audit record, not on the wire.</td></tr>
+  </tbody>
+</table>
+
+<h2>13. Status codes</h2>
+<table class="tight">
+  <thead><tr><th style="width:12%">Code</th><th style="width:26%">Body <code>error</code></th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td>200</td><td>&mdash;</td><td>Turn completed. Includes policy denials and refusals.</td></tr>
+    <tr><td>400</td><td class="mono">BAD_REQUEST</td><td>Missing <code>deviceId</code> or <code>transcript</code>, or the body was not valid JSON.</td></tr>
+    <tr><td>404</td><td class="mono">UNKNOWN_DEVICE</td><td>Device unknown, revoked, or its room binding is broken.</td></tr>
+    <tr><td>404</td><td class="mono">NOT_FOUND</td><td>No such route.</td></tr>
+    <tr><td>413</td><td class="mono">PAYLOAD_TOO_LARGE</td><td>Body over 16&nbsp;KB. A transcript is a sentence, not a payload.</td></tr>
+    <tr><td>500</td><td class="mono">TURN_FAILED</td><td>Unhandled internal fault. Should be rare; report it.</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part V</span>Response Semantics</h1>
+
+<h2>14. Lanes</h2>
+
+<p>Every turn takes exactly one lane. The lane explains the latency and the behaviour.</p>
+
+<table>
+  <thead><tr><th style="width:14%">Lane</th><th style="width:16%">Typical</th><th style="width:34%">When</th><th style="width:36%">What it means for you</th></tr></thead>
+  <tbody>
+    <tr><td><strong>fast</strong></td><td>~20&ndash;40&nbsp;ms</td><td>High-confidence match against a curated grammar, all slots filled, single action, tier &le;&nbsp;T2</td><td>No LLM was called at all. Target is 55&ndash;65% of real traffic.</td></tr>
+    <tr><td><strong>agentic</strong></td><td>~40&ndash;900&nbsp;ms<span class="small"> (mock)</span></td><td>Everything else: compound requests, free text, relative changes needing state, questions</td><td>Full reasoning over the tool surface. With real Gemini expect ~1.9&nbsp;s, masked by the filled pause.</td></tr>
+    <tr><td><strong>clarify</strong></td><td>~1&nbsp;ms</td><td>ASR confidence &lt; 0.60, or an ambiguous referent with no session context</td><td>A question was asked, no action taken. <code>calls</code> is empty.</td></tr>
+    <tr><td><strong>confirm</strong></td><td>~1&nbsp;ms</td><td>The previous turn left a frozen chargeable action and this turn is yes or no</td><td>No model involved. The frozen action executes verbatim or is discarded.</td></tr>
+    <tr><td><strong>degraded</strong></td><td>&mdash;</td><td>The service is at degradation level 2 or higher</td><td>Reduced scope. The reply states what still works rather than what is broken.</td></tr>
+  </tbody>
+</table>
+
+<h3>14.1 Degradation levels</h3>
+<table class="tight">
+  <thead><tr><th style="width:10%">Level</th><th style="width:26%">Trigger</th><th>Guest experience</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>Normal</td><td>Full capability</td></tr>
+    <tr><td>1</td><td>LLM slow (p95 &gt; 2.5&nbsp;s)</td><td>Unchanged &mdash; thinking budget capped, fast lane widened</td></tr>
+    <tr><td>2</td><td>LLM errors &gt; 10%</td><td>Fast lane only; the reply names what still works. The route to a human stays open.</td></tr>
+    <tr><td>3</td><td>ASR unavailable</td><td>Screen UI takes over</td></tr>
+    <tr><td>4</td><td>WAN down</td><td>On-device grammar &rarr; edge gateway &rarr; room systems. Lights, climate and DND still work.</td></tr>
+    <tr><td>5</td><td>Edge unreachable too</td><td>Honest failure message pointing at the room phone</td></tr>
+  </tbody>
+</table>
+
+<h2>15. Risk tiers</h2>
+
+<p>Every tool carries a tier. The tier determines what the platform requires before the action
+reaches the world, and it appears on every entry in <code>calls[]</code>.</p>
+
+<table>
+  <thead><tr><th style="width:10%">Tier</th><th style="width:26%">Character</th><th style="width:32%">Requirement</th><th style="width:32%">Examples</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-t0">T0</span></td><td>Read-only</td><td>Scope check. Auto-execute.</td><td><code>room.get_state</code>, <code>stay.get_info</code>, <code>fnb.get_menu</code></td></tr>
+    <tr><td><span class="pill p-t1">T1</span></td><td>Reversible physical</td><td>Scope + capability + bounds. Auto-execute, confirm verbally after.</td><td><code>lighting.set</code>, <code>climate.set_temperature</code>, <code>curtains.set</code>, <code>dnd.set</code></td></tr>
+    <tr><td><span class="pill p-t2">T2</span></td><td>Involves a human</td><td>Scope + duplicate + rate limit. The reply must state exactly what was committed.</td><td><code>service.create_request</code>, <code>stay.set_wakeup_call</code>, <code>staff.connect</code></td></tr>
+    <tr><td><span class="pill p-t3">T3</span></td><td>Money</td><td><strong>Mandatory spoken confirmation in a separate turn</strong>, within 90&nbsp;s, plus spend caps.</td><td><code>fnb.place_order</code></td></tr>
+    <tr><td><span class="pill p-t4">T4</span></td><td>Safety-critical</td><td>Never executed by the agent. It may only <em>raise</em>; a human acts.</td><td><code>staff.escalate_urgent</code></td></tr>
+    <tr><td><span class="pill p-t4">T5</span></td><td>Prohibited</td><td>No tool exists. Cannot be proposed.</td><td>Door locks, safes, remote microphone, any cross-room or bulk action, card handling</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">There is no door-lock tool, at any tier</div>
+  <p>Guests will ask. A voice interface has no reliable speaker authentication and the room is
+  accessible to anyone physically present, so the failure mode is a stranger entering an occupied
+  guest room. No confirmation flow makes that acceptable, because the attacker and the guest are
+  indistinguishable to the device. If it must ever exist it needs a second factor that is not
+  voice &mdash; and it should be that authenticated app, not the voice device, that performs the
+  action.</p>
+</div>
+
+<h2>16. Policy verdicts and rule IDs</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">Verdict</th><th style="width:36%">Meaning</th><th>Your handling</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">ALLOW</td><td>Authorised and executed</td><td>Check <code>ok</code> &mdash; authorisation and execution are different things</td></tr>
+    <tr><td class="mono">CONFIRM</td><td>Frozen, awaiting a spoken yes</td><td><code>awaitingConfirmation</code> is true; next turn should be yes or no</td></tr>
+    <tr><td class="mono">DENY</td><td>Policy refused it</td><td>Normal outcome. Do not retry or rephrase &mdash; the rule will fire again</td></tr>
+    <tr><td class="mono">ESCALATE</td><td>Handed to a human; the agent did not act</td><td><code>escalated</code> is true. Surface it prominently</td></tr>
+  </tbody>
+</table>
+
+<h3>16.1 Rule reference</h3>
+<table class="tight">
+  <thead><tr><th style="width:30%">ruleId</th><th style="width:34%">Fires when</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">allow</td><td>All checks passed</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R1.unknown_tool</td><td>The model invented a tool name</td><td>Also how prohibited (T5) actions are refused &mdash; they have no definition</td></tr>
+    <tr><td class="mono">R2.tool_disabled</td><td>Property disabled the tool by name</td><td>Capability kill switch; propagates in seconds</td></tr>
+    <tr><td class="mono">R2.tier_ceiling</td><td>Above the property's maximum tier</td><td>Read-only mode is <code>ceiling = T0</code>. Does <em>not</em> apply to escalation</td></tr>
+    <tr><td class="mono">R3.no_voice_consent</td><td>Assistant disabled for this stay</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R3.no_preference_consent</td><td>Preference memory not opted into</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R4.escalate_to_human</td><td>Any T4 action</td><td>Always returns ESCALATE, at every degradation level</td></tr>
+    <tr><td class="mono">R5.capability_absent</td><td>Room lacks the capability</td><td>Rare &mdash; the tool is normally filtered out before the model sees it</td></tr>
+    <tr><td class="mono">R6.out_of_bounds</td><td>Temperature outside the property band</td><td>Bounds are property config, not schema</td></tr>
+    <tr><td class="mono">R7.quiet_hours_defer</td><td>Non-urgent request during quiet hours</td><td><strong>An ALLOW.</strong> Annotated with <code>dispatchAt</code>; the guest is told</td></tr>
+    <tr><td class="mono">R8.duplicate_request</td><td>A request in that category is already open</td><td>Returns the existing request ID</td></tr>
+    <tr><td class="mono">R9.turn_rate</td><td>&gt; 30 turns/hour for the device</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R9.actuation_burst</td><td>&ge; 6 actuations in a minute</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R9.climate_churn</td><td>Too many temperature changes in an hour</td><td>Property-configurable</td></tr>
+    <tr><td class="mono">R9.max_open_requests</td><td>Per-stay open-ticket cap reached</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R10.per_order_cap</td><td>Single order over the property cap</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R10.per_stay_cap</td><td>Stay spending cap would be breached</td><td>&mdash;</td></tr>
+    <tr><td class="mono">R11.confirmation_required</td><td>T3 action proposed</td><td>Freezes the action, mints a single-use token</td></tr>
+    <tr><td class="mono">R11.confirmation_redeemed</td><td>Guest said yes</td><td>Executes the frozen action verbatim</td></tr>
+    <tr><td class="mono">gateway.invalid_argument</td><td>Schema validation failed</td><td>Unknown fields are rejected, not ignored</td></tr>
+  </tbody>
+</table>
+
+<h2>17. The confirmation protocol</h2>
+
+<p>The only two-turn flow in the API, and the one most worth implementing carefully.</p>
+
+<pre class="ascii">
+ TURN N                                          TURN N+1
+ ────────────────────────────────────────────    ────────────────────────────────────────────
+ guest: "I'd like a club sandwich"               guest: "yes"
+                                                 lane = "confirm"  (no model involved)
+ → fnb.get_menu          ALLOW                   → validates the single-use token
+ → fnb.place_order       CONFIRM                 → executes the STORED action verbatim
+                                                    (NOT re-derived from this utterance —
+ platform freezes, server-side:                      which is what makes injection useless)
+   { token, tool, args, total, expires: 90s }    → marks the token consumed
+
+ speech: "I have 1 item ready to order.          speech: "Ordered — about 30 minutes.
+          That's 850 INR, charged to your                 850 INR has gone to your room bill."
+          room. Shall I place it?"
+ awaitingConfirmation: true                      awaitingConfirmation: false
+
+                                                 "no" / timeout / anything ambiguous
+                                                 → token discarded, nothing executed,
+                                                   nothing charged, audit records it
+</pre>
+
+<div class="box good">
+  <div class="bt">The property that matters</div>
+  <p>The action executed on confirmation is the action that was <strong>authorised, byte for
+  byte</strong>. The model does not get to reinterpret it. A guest saying "yes" can only ever
+  confirm the frozen pending action or nothing at all &mdash; so an injected instruction in the
+  confirming turn cannot substitute a different order.</p>
+  <p>Client requirements: treat <code>awaitingConfirmation: true</code> as a modal state, always
+  render the <code>screen</code> text carrying the total, and let the guest cancel. Do not
+  auto-confirm, ever.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VI</span>MCP &amp; the Tool Plane</h1>
+
+<h2>18. What MCP means here</h2>
+
+<p>MCP &mdash; the Model Context Protocol &mdash; is how capabilities are exposed <em>to a model</em>.
+In Woohoo it is an <strong>internal</strong> plane. It is not a public API, and you do not call it
+directly: you send a transcript, and the agent decides which tools to propose.</p>
+
+<p>Understanding it still matters to an integrator, because the <code>calls[]</code> array in every
+response <em>is</em> the tool plane's output, and because the tool surface is what determines what
+the assistant can and cannot do in a given room.</p>
+
+<pre class="ascii">
+  AGENT ──── one connection ────► MCP GATEWAY ──┬─► property catalog
+  (proposes only)                               ├─► device state ──► automation adapter ──► BMS
+                                                ├─► service requests
+       ┌────────────────────────────┐           ├─► F&B orders
+       │  the gateway does:         │           ├─► PMS bridge
+       │  · per-room tool filtering │           ├─► knowledge / RAG
+       │  · scope injection         │           ├─► guest preferences
+       │  · argument validation     │           └─► notification / escalation
+       │  · result sanitisation     │
+       │  · error normalisation     │      The agent can NEVER address these directly.
+       │  · caching, audit          │      That is what makes tenant scoping mechanical
+       └────────────────────────────┘      rather than a code-review question.
+</pre>
+
+<h2>19. The MCP gateway</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Responsibility</th><th>What it prevents</th></tr></thead>
+  <tbody>
+    <tr><td>Per-tenant tool filtering</td><td>A property without curtains seeing a curtain tool the model will happily call</td></tr>
+    <tr><td><strong>Scope injection</strong></td><td>Model-supplied room identifiers ever reaching a downstream service &mdash; they are stripped, not validated</td></tr>
+    <tr><td>Argument validation</td><td>Invented fields slipping through; every schema is strict, so unknown keys fail loudly</td></tr>
+    <tr><td>Result sanitisation</td><td>Staff-authored menu text acting as a prompt injection vector</td></tr>
+    <tr><td>Error normalisation</td><td>Raw vendor errors like <code>INNCOM: ERR_0x8004</code> reaching the model, which produces either a hallucinated explanation or a dead-end apology</td></tr>
+    <tr><td>Uniform audit</td><td>Each downstream service logging differently, or not at all</td></tr>
+  </tbody>
+</table>
+
+<h2>20. Complete tool reference</h2>
+
+<p>Twenty-two tools. A given room typically sees 12&ndash;21 after capability filtering. Generated
+from <code>packages/contracts/src/tools.ts</code>.</p>
+
+<table class="tight">
+  <thead><tr>
+    <th style="width:20%">Tool</th><th style="width:6%">Tier</th><th style="width:19%">Requires capability</th>
+    <th style="width:29%">Arguments</th><th style="width:26%">Notes</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="mono">room.get_state</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>Pre-fetched into context on most turns, so it rarely needs calling</td></tr>
+    <tr><td class="mono">lighting.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">lighting.on_off</td><td><code>zone</code>, <code>on?</code>, <code>brightness?</code> 0&ndash;100</td><td>Verify-read. Zone enum narrowed to the room's real zones</td></tr>
+    <tr><td class="mono">climate.set_temperature</td><td><span class="pill p-t1">T1</span></td><td class="mono">climate.setpoint</td><td><code>zone</code>, <code>targetC</code> 10&ndash;35</td><td>Property bounds enforced by the PDP, not the schema</td></tr>
+    <tr><td class="mono">climate.set_mode</td><td><span class="pill p-t1">T1</span></td><td class="mono">climate.mode</td><td><code>zone</code>, <code>mode</code>: auto&nbsp;|&nbsp;cool&nbsp;|&nbsp;heat&nbsp;|&nbsp;fan&nbsp;|&nbsp;off</td><td>Verify-read</td></tr>
+    <tr><td class="mono">curtains.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">curtains.position</td><td><code>zone</code>, <code>position</code> 0&ndash;100</td><td>Binary motors are degraded in the adapter; the model never learns the difference</td></tr>
+    <tr><td class="mono">dnd.set</td><td><span class="pill p-t1">T1</span></td><td class="mono">dnd</td><td><code>state</code>: off&nbsp;|&nbsp;dnd&nbsp;|&nbsp;make_up_room</td><td>Verify-read</td></tr>
+    <tr><td class="mono">tv.control</td><td><span class="pill p-t1">T1</span></td><td class="mono">tv.power_volume_input</td><td><code>power?</code>, <code>volume?</code>, <code>input?</code></td><td>&mdash;</td></tr>
+    <tr><td class="mono">scene.apply</td><td><span class="pill p-t1">T1</span></td><td class="mono">lighting.scene</td><td><code>scene</code></td><td>Scene names come from property config</td></tr>
+    <tr><td class="mono">media.control</td><td><span class="pill p-t1">T1</span></td><td class="mono">media.playback</td><td><code>action</code>: play&nbsp;|&nbsp;pause&nbsp;|&nbsp;next&nbsp;|&nbsp;previous, <code>query?</code></td><td>&mdash;</td></tr>
+    <tr><td class="mono">service.create_request</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>category</code>, <code>subcategory?</code>, <code>description</code>, <code>priority</code></td><td><strong>Not idempotent.</strong> Duplicate-suppressed; deferred during quiet hours</td></tr>
+    <tr><td class="mono">service.get_status</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>This room's open requests only</td></tr>
+    <tr><td class="mono">service.cancel_request</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>requestId</code></td><td>A request belonging to another room is simply "not found"</td></tr>
+    <tr><td class="mono">fnb.get_menu</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><code>category?</code></td><td><strong>Untrusted result</strong> &mdash; staff-authored, fenced before entering context</td></tr>
+    <tr><td class="mono">fnb.place_order</td><td><span class="pill p-t3">T3</span></td><td>&mdash;</td><td><code>items[]</code> (1&ndash;15), <code>deliveryNote?</code></td><td>Confirmation mandatory. Item IDs must come from <code>fnb.get_menu</code></td></tr>
+    <tr><td class="mono">fnb.get_order_status</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>&mdash;</td></tr>
+    <tr><td class="mono">stay.get_info</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><em>none</em></td><td>Only ever resolves the stay bound to this room</td></tr>
+    <tr><td class="mono">stay.request_late_checkout</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>requestedTime</code> HH:MM</td><td>Requests, does not grant. The front desk decides</td></tr>
+    <tr><td class="mono">stay.set_wakeup_call</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>action</code>, <code>time?</code> HH:MM</td><td>Time is always read back to the guest</td></tr>
+    <tr><td class="mono">property.search_knowledge</td><td><span class="pill p-t0">T0</span></td><td>&mdash;</td><td><code>query</code></td><td><strong>Untrusted result.</strong> Returns citations. The <em>only</em> source of property facts</td></tr>
+    <tr><td class="mono">staff.connect</td><td><span class="pill p-t2">T2</span></td><td>&mdash;</td><td><code>department</code>, <code>reason?</code></td><td>Always reachable, even under a read-only tier ceiling</td></tr>
+    <tr><td class="mono">staff.escalate_urgent</td><td><span class="pill p-t4">T4</span></td><td>&mdash;</td><td><code>category</code>, <code>summary</code></td><td>Never executed by the agent. Always ESCALATE</td></tr>
+    <tr><td class="mono">preferences.set</td><td><span class="pill p-t1">T1</span></td><td>&mdash;</td><td><code>key</code>, <code>value</code></td><td>Absent from the surface unless the guest opted in</td></tr>
+  </tbody>
+</table>
+
+<h3>20.1 Two schemas in full</h3>
+
+<pre>{ <span class="c">// climate.set_temperature — T1</span>
+  "name": "climate.set_temperature",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "zone":    { "type": "string", "enum": ["bedroom","living"] },  <span class="c">// narrowed per room</span>
+      "targetC": { "type": "number", "minimum": 10, "maximum": 35 }
+    },
+    "required": ["zone","targetC"],
+    "additionalProperties": false          <span class="c">// invented fields are REJECTED</span>
+  },
+  "x-woohoo": { "tier":"T1", "idempotent":true, "verifyRead":true, "timeoutMs":2500 }
+}
+
+{ <span class="c">// fnb.place_order — T3, the only chargeable tool</span>
+  "name": "fnb.place_order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "items": { "type":"array", "minItems":1, "maxItems":15, "items": {
+        "type":"object",
+        "properties": {
+          "menuItemId": { "type":"string" },   <span class="c">// MUST come from fnb.get_menu</span>
+          "quantity":   { "type":"integer", "minimum":1, "maximum":10 },
+          "notes":      { "type":"string", "maxLength":200 }
+        },
+        "required": ["menuItemId","quantity"] } },
+      "deliveryNote": { "type":"string", "maxLength":200 }
+    },
+    "required": ["items"],
+    "additionalProperties": false
+  },
+  "x-woohoo": {
+    "tier": "T3",
+    "requiresConfirmation": true,
+    "confirmationMustInclude": ["totalAmount","currency","itemCount"],
+    "spendCapApplies": true,
+    "retry": "never"                       <span class="c">// a duplicate order is a chargeback</span>
+  }
+}</pre>
+
+<h2>21. Tool error envelope</h2>
+
+<p>Every failure the agent sees is normalised into this shape. Errors are written as
+<em>instructions</em>, because a bare code produces an apology and a dead end while a suggestion
+lets the agent recover.</p>
+
+<pre>{
+  "error": "NOT_AVAILABLE",
+  "detail": "This room does not have motorised curtains.",
+  "suggestion": "Tell the guest the curtains are manual. Offer to send housekeeping if they need help.",
+  "retryable": false
+}</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Code</th><th style="width:38%">Meaning</th><th>Retryable</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">NOT_AVAILABLE</td><td>Room lacks the capability, or the item is off the menu</td><td>No</td></tr>
+    <tr><td class="mono">NOT_PERMITTED</td><td>Policy refused it</td><td>No &mdash; and the agent is told not to rephrase</td></tr>
+    <tr><td class="mono">TEMPORARILY_UNREACHABLE</td><td>Head-end or upstream not responding</td><td>Yes</td></tr>
+    <tr><td class="mono">NEEDS_CONFIRMATION</td><td>T3 action needs a separate confirmed turn</td><td>No</td></tr>
+    <tr><td class="mono">INVALID_ARGUMENT</td><td>Schema or bounds violation</td><td>Once, after correction</td></tr>
+    <tr><td class="mono">RATE_LIMITED</td><td>Per-device, per-stay or per-property limit hit</td><td>Later</td></tr>
+    <tr><td class="mono">DUPLICATE</td><td>A request of this kind is already open</td><td>No</td></tr>
+  </tbody>
+</table>
+
+<h2>22. Scope injection</h2>
+
+<p>What the model emits versus what actually executes:</p>
+
+<pre>{ <span class="c">// what the model emitted — note the room_id it invented</span>
+  "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "targetC": 23.0, "room_id": "999" }
+}
+
+{ <span class="c">// what the gateway executed</span>
+  "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "targetC": 23.0 },          <span class="c">// room_id STRIPPED</span>
+  "scope": {                                               <span class="c">// injected from the device identity</span>
+    "tenantId":   "t_demo_apac",
+    "propertyId": "p_blr_whitefield",
+    "roomId":     "r_412",
+    "deviceId":   "d_412a"
+  },
+  "idempotencyKey": "sha256(turn_id | tool | canonical_args)"
+}</pre>
+
+<p><strong>Stripped, not validated.</strong> Any field matching a room, property, tenant or device
+pattern is removed before policy sees the call, and an attempt is recorded as a security signal.</p>
+
+<h1 class="part"><span class="pn">Part VII</span>Capability Model</h1>
+
+<h2>23. How the surface is generated</h2>
+
+<p>The tool list is not fixed. It is <strong>generated per room</strong> from that room's capability
+manifest, which means a capability the room does not have produces no tool &mdash; so the model
+cannot propose it, no runtime check is needed, and no apology is ever generated for an action that
+was never possible.</p>
+
+<pre class="ascii">
+  capability manifest (per ROOM TYPE, with per-room overrides)
+        │
+        ▼
+  toolSurfaceFor(manifest)  ── drops tools whose capability is absent
+        │                   ── narrows zone enums to the room's real zones
+        ▼
+  the tool list the agent is given for THIS turn
+</pre>
+
+<h2>24. Worked example: three rooms</h2>
+
+<p>The same words, three outcomes, entirely from configuration. Verified against the running build:</p>
+
+<table>
+  <thead><tr><th style="width:14%">Device</th><th style="width:12%">Room</th><th style="width:16%">Type</th><th style="width:20%">Curtain capability</th><th style="width:12%">Tools</th><th style="width:26%">"close the curtains"</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>None</td><td><strong>18</strong></td><td>No curtain tool exists &rarr; the assistant explains rather than failing</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td><code>curtains.position</code></td><td><strong>21</strong></td><td>Fast lane, ALLOW, curtains close</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Removed by room override</td><td><strong>20</strong></td><td>No curtain tool &mdash; "motor awaiting replacement"</td></tr>
+  </tbody>
+</table>
+
+<p class="small">Room 512 is a Suite and would normally have curtains; a per-room override removes
+the capability. Overrides can only ever <em>remove</em>, never add &mdash; adding would let a config
+edit widen what the agent can do without a manifest version bump.</p>
+
+<h3>24.1 The Deluxe surface (18 tools)</h3>
+<pre>room.get_state · lighting.set · climate.set_temperature · climate.set_mode · dnd.set
+tv.control · service.create_request · service.get_status · service.cancel_request
+fnb.get_menu · fnb.place_order · fnb.get_order_status · stay.get_info
+stay.request_late_checkout · stay.set_wakeup_call · property.search_knowledge
+staff.connect · staff.escalate_urgent</pre>
+
+<h3>24.2 The Suite surface (21 tools)</h3>
+<pre>… everything above, plus:
+curtains.set · scene.apply · media.control</pre>
+
+<p class="small"><code>preferences.set</code> is absent from both because the demo guests have not
+opted in to preference memory. It appears only with explicit consent.</p>
+
+<h2>25. Property configuration</h2>
+
+<p>Onboarding a property is authoring one document, not writing code. The manifest attaches to
+<strong>room type</strong>, not room: a 300-room property has perhaps eight types, and authoring
+eight manifests with a handful of overrides is a day's work where authoring 300 is a project.</p>
+
+<pre>{
+  "propertyId": "p_blr_whitefield",
+  "timezone": "Asia/Kolkata",
+  "languages": ["en-IN","hi-IN"],
+  "automation": { "vendor": "simulator", "roomRefMapping": "vendor_room_id" },
+  "policy": {
+    "climate":  { "minC": 18, "maxC": 26, "maxChangesPerHour": 6 },
+    "quietHours": { "start": "22:00", "end": "07:00", "deferNonUrgentDispatch": true },
+    "spend": { "perStayCap":  { "amount": 15000, "currency": "INR" },
+               "perOrderCap": { "amount":  6000, "currency": "INR" } },
+    "serviceRequests": { "maxOpen": 10, "maxOpenPerCategory": 3 },
+    "tierCeiling": "T3",              <span class="c">// kill switch: "T0" = read-only mode</span>
+    "disabledTools": []               <span class="c">// per-tool kill switch</span>
+  },
+  "escalation": { "emergencyNumberDisplay": "112", "crisisHelplineDisplay": "+91-…" },
+  "roomTypes": [ { "id": "rt_suite", "capabilityManifest": { … } } ],
+  "roomOverrides": [ { "roomRef": "r_512", "disable": ["curtains.position"] } ]
+}</pre>
+
+<div class="box info">
+  <div class="bt">The vendor room reference is not the room number</div>
+  <p><code>vendorRoomId</code> (e.g. <code>INN-0412</code>) is the automation system's own
+  identifier and is resolved at onboarding. Assuming it equals the hotel room number is a classic
+  integration bug whose symptom is actions landing in the wrong room.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VIII</span>Gaps &amp; Fixtures</h1>
+
+<h2>26. What is not built</h2>
+
+<div class="box warn">
+  <div class="bt">There is no staff or admin API</div>
+  <p>If you are building the staff or admin UI, <strong>there is currently nothing to call</strong>.
+  The domain logic exists and is tested &mdash; listing open requests, acknowledging escalations,
+  searching turn records, authoring manifests, flipping kill switches &mdash; but no HTTP layer is
+  exposed over any of it, and there is no authentication or RBAC.</p>
+  <p>What a UI will need: a staff task API, an admin API for property/room/device and manifest
+  authoring, an ops API for audit search and kill switches, a live event stream (SSE or WebSocket)
+  so a housekeeping tablet buzzes when a ticket lands, and OIDC with per-property RBAC. That last
+  one matters most: the staff API is the <em>only</em> inbound path in the entire design, and
+  tenant-claim validation on every request is the control a chain's penetration test probes first.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Area</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Audio pipeline</td><td>Not built</td><td>No wake word, AEC, VAD, endpointing, Opus, ASR or TTS. The gateway takes transcripts as control frames. Binary frames are reserved but unhandled.</td></tr>
+    <tr><td>Android app changes</td><td>Not started</td><td>The existing app still holds cloud credentials and calls Google STT directly. See &sect;10.</td></tr>
+    <tr><td>Real automation adapters</td><td>Simulator only</td><td>INNCOM, Interel, BACnet and KNX need vendor protocol documentation and lab hardware. The adapter contract they implement is complete.</td></tr>
+    <tr><td>PMS integration</td><td>Not built</td><td><code>stay.get_info</code> reads a seeded local record. No folio posting, no checkout event.</td></tr>
+    <tr><td>Postgres persistence</td><td>Schema only</td><td>Full schema with row-level security exists in <code>db/migrations/</code>; repositories are in-memory. Swapping is a constructor change.</td></tr>
+    <tr><td>Staff / admin API</td><td>Not built</td><td>See the box above.</td></tr>
+    <tr><td>Terraform</td><td>Unapplied</td><td>Written but never <code>plan</code>ed or <code>validate</code>d &mdash; no AWS credentials available.</td></tr>
+    <tr><td>Docker stack</td><td>Unverified</td><td>Compose file written; the Docker daemon was not running during the build. Expect to debug the first <code>make up</code>.</td></tr>
+  </tbody>
+</table>
+
+<h2>27. Demo fixtures</h2>
+
+<p>Seeded automatically on startup. Use these to exercise every path.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Device</th><th style="width:10%">Room</th><th style="width:18%">Type</th><th>Use it to test</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>Capability absence &mdash; curtains, scenes and media are all unavailable</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td>Full capability &mdash; curtains, scenes, media</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Per-room override removing a capability the room type has</td></tr>
+  </tbody>
+</table>
+
+<h3>27.1 Menu</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">ID</th><th style="width:26%">Name</th><th style="width:16%">Price</th><th style="width:22%">Spoken aliases</th><th>Available</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">m_club</td><td>Club Sandwich</td><td>850 INR</td><td>sandwich, club</td><td>yes</td></tr>
+    <tr><td class="mono">m_dosa</td><td>Masala Dosa</td><td>450 INR</td><td>dosa, south indian</td><td>yes</td></tr>
+    <tr><td class="mono">m_beer</td><td>Kingfisher Premium</td><td>390 INR</td><td>beer, lager, kingfisher</td><td>yes</td></tr>
+    <tr><td class="mono">m_caesar</td><td>Caesar Salad</td><td>620 INR</td><td>salad, caesar</td><td><strong>no</strong> &mdash; tests unavailability</td></tr>
+  </tbody>
+</table>
+<p class="small">Aliases exist because a guest ordering "a beer" must not fail just because the menu
+calls it "Kingfisher Premium". They also feed the ASR phrase-hint set.</p>
+
+<h3>27.2 Useful test utterances</h3>
+<table class="tight">
+  <thead><tr><th style="width:44%">Say this</th><th style="width:14%">Expect lane</th><th>Exercises</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turn on the lights</td><td>fast</td><td>Deterministic path, no LLM call</td></tr>
+    <tr><td class="mono">it's freezing in here</td><td>agentic</td><td>Relative change requiring current state (19.5&nbsp;&rarr;&nbsp;22.5&nbsp;&deg;C)</td></tr>
+    <tr><td class="mono">it's too cold and fix the shower</td><td>agentic</td><td>Two intents in one utterance</td></tr>
+    <tr><td class="mono">set the temperature to 35 degrees</td><td>agentic</td><td>DENY on <code>R6.out_of_bounds</code></td></tr>
+    <tr><td class="mono">I'd like a club sandwich and a beer</td><td>agentic</td><td>T3 CONFIRM, total 1240 INR</td></tr>
+    <tr><td class="mono">yes</td><td>confirm</td><td>Redeeming the frozen action</td></tr>
+    <tr><td class="mono">who is staying in room 402</td><td>agentic</td><td>Cross-guest refusal</td></tr>
+    <tr><td class="mono">unlock the door</td><td>agentic</td><td>Prohibited capability &mdash; no tool exists</td></tr>
+    <tr><td class="mono">I'm having chest pain</td><td>agentic</td><td>T4 ESCALATE with emergency-number wording</td></tr>
+    <tr><td class="mono">what time does the pool open</td><td>agentic</td><td>Grounded knowledge retrieval</td></tr>
+  </tbody>
+</table>
+
+<h2>28. Error reference</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Layer</th><th style="width:26%">Code</th><th>Where you see it</th></tr></thead>
+  <tbody>
+    <tr><td>WebSocket</td><td class="mono">NOT_AUTHENTICATED · UNKNOWN_DEVICE · RATE_LIMITED · BAD_FRAME · TURN_FAILED</td><td><code>{"type":"error"}</code> frame</td></tr>
+    <tr><td>HTTP</td><td class="mono">BAD_REQUEST · UNKNOWN_DEVICE · NOT_FOUND · PAYLOAD_TOO_LARGE · TURN_FAILED</td><td>Response body <code>error</code> field with a 4xx/5xx status</td></tr>
+    <tr><td>Tool</td><td class="mono">NOT_AVAILABLE · NOT_PERMITTED · TEMPORARILY_UNREACHABLE · NEEDS_CONFIRMATION · INVALID_ARGUMENT · RATE_LIMITED · DUPLICATE</td><td><code>calls[].error</code>, always with HTTP 200</td></tr>
+    <tr><td>Policy</td><td class="mono">R1&hellip;R11 rule IDs (&sect;16.1)</td><td><code>calls[].ruleId</code> &mdash; tells you <em>why</em>, not just <em>what</em></td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 &mdash; Integration &amp; API Reference &middot; Version 1.0<br>
+Examples captured from a live build. Tool tables generated from <code>packages/contracts/src/tools.ts</code>.<br>
+Companion to the architecture document in <code>docs/architecture/</code>.
+</p>
+
+</body>
+</html>
