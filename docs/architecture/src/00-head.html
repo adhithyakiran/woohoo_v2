@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo — Agentic Voice Platform Architecture</title>
+<style>
+:root{
+  --ink:#14181f;
+  --ink2:#39424f;
+  --muted:#6b7683;
+  --line:#d7dde5;
+  --line2:#eef1f5;
+  --navy:#16283f;
+  --navy2:#22405f;
+  --accent:#b4791a;
+  --accent-l:#fdf6e7;
+  --teal:#0f6e6a;
+  --teal-l:#e9f5f4;
+  --red:#9d2c2c;
+  --red-l:#fbeeee;
+  --green:#256b3f;
+  --green-l:#ecf6f0;
+  --violet:#5a3d8c;
+  --violet-l:#f2eefa;
+  --grey-l:#f5f7f9;
+}
+@page{
+  size: A4;
+  margin: 17mm 15mm 16mm 15mm;
+}
+@page:first{ margin:0; }
+
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{
+  font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+  font-size:9.4pt;
+  line-height:1.52;
+  color:var(--ink);
+  margin:0;
+}
+p{margin:0 0 7pt;}
+strong{font-weight:650;color:var(--ink);}
+em{color:var(--ink2);}
+a{color:var(--navy2);text-decoration:none;}
+code,kbd{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:8.4pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+
+/* ---------- COVER ---------- */
+.cover{
+  height:297mm;width:210mm;
+  background:linear-gradient(150deg,#0e1b2b 0%,#16283f 45%,#22405f 100%);
+  color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;
+}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#c9a44e;font-weight:600;}
+.cover h1{font-size:37pt;line-height:1.06;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#e8c87a;}
+.cover .sub{font-size:12.5pt;color:#b9c8da;margin-top:9mm;font-weight:300;line-height:1.5;max-width:135mm;}
+.cover .rule{width:52mm;height:3px;background:#c9a44e;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.6pt;color:#9fb2c7;
+  display:grid;grid-template-columns:repeat(4,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#e8c87a;font-size:7.4pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.cover .badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 13px;font-size:8pt;color:#dce6f0;margin-right:6px;margin-top:4px;}
+
+/* ---------- HEADINGS ---------- */
+h1.part{
+  page-break-before:always;font-size:22pt;font-weight:300;color:var(--navy);
+  margin:0 0 4mm;padding-bottom:4mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;
+}
+h1.part .pn{display:block;font-size:8pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:13pt;font-weight:600;color:var(--navy);margin:9mm 0 3mm;padding-left:3.5mm;border-left:3.5px solid var(--accent);page-break-after:avoid;letter-spacing:-.15pt;}
+h3{font-size:10.6pt;font-weight:650;color:var(--navy2);margin:6mm 0 2mm;page-break-after:avoid;}
+h4{font-size:9.6pt;font-weight:650;color:var(--ink);margin:4.5mm 0 1.5mm;page-break-after:avoid;}
+h2+h3,h3+h4{margin-top:3mm;}
+
+ul,ol{margin:0 0 7pt;padding-left:16px;}
+li{margin-bottom:2.6pt;}
+li>ul,li>ol{margin-top:2.6pt;}
+
+/* ---------- TABLES ---------- */
+table{width:100%;border-collapse:collapse;margin:3mm 0 6mm;font-size:8.2pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4.5px 6px;font-weight:600;font-size:7.8pt;
+   letter-spacing:.03em;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4.5px 6px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+table.tight{font-size:7.7pt;}
+table.tight td,table.tight th{padding:3.2px 5px;}
+td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:"Cascadia Mono",Consolas,monospace;font-size:7.8pt;}
+tr.total td{background:var(--accent-l)!important;font-weight:650;border-top:2px solid var(--accent);}
+
+/* ---------- CALLOUTS ---------- */
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);
+  padding:4mm 5mm;margin:4mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2mm;}
+.box p:last-child,.box ul:last-child,.box ol:last-child{margin-bottom:0;}
+.box.decision{border-left-color:var(--accent);background:var(--accent-l);}
+.box.decision .bt{color:#8a5c0d;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);}
+.box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);}
+.box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);}
+.box.info .bt{color:var(--teal);}
+.box.spec{border-left-color:var(--violet);background:var(--violet-l);}
+.box.spec .bt{color:var(--violet);}
+
+/* ---------- CODE / ASCII ---------- */
+pre{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:7.1pt;line-height:1.34;
+  background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3.5mm 4mm;margin:3mm 0 5mm;
+  overflow-x:auto;white-space:pre;page-break-inside:avoid;color:#1b2734;}
+pre.dark{background:#131c27;color:#cfe0ee;border-color:#131c27;}
+pre.dark .c{color:#7d94a8;}
+pre.ascii{font-size:6.6pt;line-height:1.25;}
+/* forces a proportional-fallback glyph onto an exact monospace advance so box drawings stay aligned */
+pre .mw{display:inline-block;width:1ch;text-align:center;overflow:visible;}
+pre.json{font-size:7pt;}
+figcaption,.cap{font-size:7.6pt;color:var(--muted);font-style:italic;margin:-3mm 0 5mm;}
+
+/* ---------- LAYERED DIAGRAM PRIMITIVES ---------- */
+.diag{border:1px solid var(--line);border-radius:4px;padding:4mm;margin:4mm 0 3mm;background:#fcfdfe;page-break-inside:avoid;}
+.lyr{display:grid;gap:2.2mm;margin-bottom:2.2mm;}
+.lyr:last-child{margin-bottom:0;}
+.c2{grid-template-columns:repeat(2,1fr);}
+.c3{grid-template-columns:repeat(3,1fr);}
+.c4{grid-template-columns:repeat(4,1fr);}
+.c5{grid-template-columns:repeat(5,1fr);}
+.c6{grid-template-columns:repeat(6,1fr);}
+.nd{border:1px solid var(--line);border-top:2.5px solid var(--navy2);background:#fff;border-radius:3px;padding:2.4mm 2.6mm;font-size:7.4pt;line-height:1.32;}
+.nd .t{font-weight:700;color:var(--navy);font-size:7.8pt;display:block;margin-bottom:1mm;}
+.nd .d{color:var(--ink2);font-size:6.9pt;display:block;}
+.nd .tag{display:inline-block;font-size:5.9pt;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+  background:var(--line2);color:var(--ink2);border-radius:2px;padding:.6mm 1.4mm;margin-top:1.2mm;}
+.nd.edge{border-top-color:var(--teal);} .nd.edge .t{color:var(--teal);}
+.nd.core{border-top-color:var(--accent);} .nd.core .t{color:#8a5c0d;}
+.nd.data{border-top-color:var(--violet);} .nd.data .t{color:var(--violet);}
+.nd.ext{border-top-color:var(--muted);border-style:dashed;} .nd.ext .t{color:var(--muted);}
+.nd.risk{border-top-color:var(--red);} .nd.risk .t{color:var(--red);}
+.band{font-size:6.6pt;letter-spacing:.2em;text-transform:uppercase;font-weight:700;color:var(--muted);
+  background:var(--line2);border-radius:2px;padding:1mm 2mm;margin:0 0 2mm;}
+.arrow{text-align:center;color:var(--accent);font-size:11pt;line-height:1;margin:.6mm 0 1.6mm;font-weight:700;}
+
+/* ---------- MISC ---------- */
+.pill{display:inline-block;font-size:6.8pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  padding:.8mm 2mm;border-radius:2.5px;margin-right:2px;}
+.p-t0{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-t1{background:#f0f6ec;color:#4d6b28;border:1px solid #cbdcb9;}
+.p-t2{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.p-t3{background:#fdf0e6;color:#9c4f13;border:1px solid #efc9a5;}
+.p-t4{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.p-must{background:var(--navy);color:#fff;}
+.p-new{background:var(--teal-l);color:var(--teal);border:1px solid #a9d5d2;}
+
+.toc{column-count:2;column-gap:9mm;font-size:8.3pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3.5mm 0 1.2mm;border-bottom:1px solid var(--line);padding-bottom:1mm;
+  break-after:avoid;font-size:8.6pt;}
+.toc .ti{color:var(--ink2);margin-bottom:.9mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+
+.kv{display:grid;grid-template-columns:38mm 1fr;gap:1.2mm 3mm;font-size:8.3pt;margin:2mm 0 5mm;}
+.kv dt{font-weight:650;color:var(--navy2);}
+.kv dd{margin:0;color:var(--ink2);}
+
+.two{column-count:2;column-gap:7mm;}
+.avoid{page-break-inside:avoid;}
+.newpage{page-break-before:always;}
+hr.soft{border:0;border-top:1px solid var(--line);margin:6mm 0;}
+.small{font-size:7.8pt;color:var(--muted);}
+.rt{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.6pt;color:var(--navy2);}
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>Agentic Voice<br>Platform<b>Architecture</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    End-to-end system design for the in-room hospitality voice assistant &mdash;
+    migrating from Dialogflow intent matching to a Gemini-powered agentic
+    orchestrator over MCP-exposed hotel, room, device and service capabilities.
+  </div>
+  <div>
+    <span class="badge">Docker &rarr; AWS</span>
+    <span class="badge">Gemini + MCP</span>
+    <span class="badge">Multi-tenant</span>
+    <span class="badge">Production-grade</span>
+    <span class="badge">Safety &amp; Compliance</span>
+  </div>
+  <div class="meta">
+    <div><b>Document</b>Woohoo V2 Target Architecture</div>
+    <div><b>Version</b>1.0 &mdash; for review</div>
+    <div><b>Date</b>29 July 2026</div>
+    <div><b>Status</b>Draft for architecture sign-off</div>
+  </div>
+</div>
+
+<!-- ============ DOC CONTROL ============ -->
+<h1 class="part"><span class="pn">Front Matter</span>How to read this document</h1>
+
+<p>This document is the complete target architecture for <strong>Woohoo V2</strong> &mdash; the second generation of the
+in-room hospitality voice assistant, rebuilt around an agentic core. It is written to be reviewed and then executed
+against: every significant choice is stated as an explicit <em>decision</em> with the reasoning and the rejected
+alternatives beside it, so a reviewer can disagree with a specific line rather than the whole design.</p>
+
+<h3>Structure</h3>
+<div class="kv">
+  <dt>Parts I&ndash;II</dt><dd>Context and the end-to-end picture. Read these even if you read nothing else &mdash; Part II contains the full system map from guest utterance to physical actuation and back.</dd>
+  <dt>Parts III&ndash;VIII</dt><dd>The build. Service decomposition, the voice pipeline, the agentic core, MCP, data, and the integration layer that talks to Honeywell / Interel / PMS.</dd>
+  <dt>Parts IX&ndash;XI</dt><dd>The things that make it a product rather than a demo: agentic safety, security, compliance and governance.</dd>
+  <dt>Parts XII&ndash;XV</dt><dd>Operating it: scale and unit economics, reliability, observability and evaluation, and the Docker&nbsp;&rarr;&nbsp;AWS deployment path.</dd>
+  <dt>Part XVI + Appendices</dt><dd>Roadmap, team shape, and the concrete contracts (tool schemas, event schemas, config schema) that the implementation starts from.</dd>
+</div>
+
+<h3>Conventions</h3>
+<ul>
+  <li><span class="pill p-must">Decision</span> boxes are load-bearing. Changing one changes the build plan.</li>
+  <li><span class="pill p-new">New</span> marks components that do not exist today and must be built.</li>
+  <li>Risk tiers <span class="pill p-t0">T0</span> <span class="pill p-t1">T1</span> <span class="pill p-t2">T2</span> <span class="pill p-t3">T3</span> <span class="pill p-t4">T4</span> are defined in Part IX and referenced throughout.</li>
+  <li>Prices and latency figures are <strong>indicative planning numbers</strong> current to early 2026. They are accurate
+      enough to choose an architecture and wrong enough that you must re-quote before signing a contract. Every such
+      figure is marked with a &dagger;.</li>
+</ul>
+
+<div class="box warn">
+  <div class="bt">Scope exclusions</div>
+  <p>Guest-facing and staff-facing <strong>UI is out of scope</strong> (owned by a separate workstream), but this document
+  does specify the <em>contracts</em> the UI depends on &mdash; the staff task API, the notification event stream, and
+  the device screen state protocol &mdash; because those are architecture, not presentation. Hardware/industrial design
+  of the device enclosure is also out of scope; the device <em>software</em> architecture is in scope.</p>
+</div>
+
+<!-- ============ TOC ============ -->
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Part I &mdash; Context &amp; Executive Summary</div>
+  <div class="ti"><b>1</b> What Woohoo is and what breaks today</div>
+  <div class="ti"><b>2</b> What actually changes in V2</div>
+  <div class="ti"><b>3</b> Executive summary of the target design</div>
+  <div class="ti"><b>4</b> Decision register</div>
+  <div class="ti"><b>5</b> Principles that drive the design</div>
+
+  <div class="tp">Part II &mdash; End-to-End Architecture</div>
+  <div class="ti"><b>6</b> The complete system map</div>
+  <div class="ti"><b>7</b> The critical path, narrated</div>
+  <div class="ti"><b>8</b> Component inventory (every box, owner, build/buy)</div>
+  <div class="ti"><b>9</b> Trust and network zones</div>
+
+  <div class="tp">Part III &mdash; Service Decomposition</div>
+  <div class="ti"><b>10</b> Modular monolith vs microservices &mdash; the honest answer</div>
+  <div class="ti"><b>11</b> The service catalogue</div>
+  <div class="ti"><b>12</b> Phased decomposition and split triggers</div>
+  <div class="ti"><b>13</b> Synchronous vs event-driven boundaries</div>
+
+  <div class="tp">Part IV &mdash; Voice &amp; Edge Layer</div>
+  <div class="ti"><b>14</b> Wake word</div>
+  <div class="ti"><b>15</b> The STT placement decision: device vs cloud</div>
+  <div class="ti"><b>16</b> ASR vendor selection</div>
+  <div class="ti"><b>17</b> TTS and response audio</div>
+  <div class="ti"><b>18</b> Cascaded vs speech-to-speech (Gemini Live)</div>
+  <div class="ti"><b>19</b> Device&harr;cloud transport</div>
+  <div class="ti"><b>20</b> Latency budget</div>
+  <div class="ti"><b>21</b> Device software architecture</div>
+  <div class="ti"><b>22</b> Hotel network reality</div>
+
+  <div class="tp">Part V &mdash; The Agentic Core</div>
+  <div class="ti"><b>23</b> Orchestration pattern</div>
+  <div class="ti"><b>24</b> The three-lane router</div>
+  <div class="ti"><b>25</b> Model selection and routing</div>
+  <div class="ti"><b>26</b> Prompt architecture and context assembly</div>
+  <div class="ti"><b>27</b> The agent loop, step by step</div>
+  <div class="ti"><b>28</b> Session, memory and disambiguation</div>
+  <div class="ti"><b>29</b> Deterministic degraded mode</div>
+
+  <div class="tp">Part VI &mdash; MCP &amp; Tool Architecture</div>
+  <div class="ti"><b>30</b> Why an MCP gateway is mandatory</div>
+  <div class="ti"><b>31</b> MCP server topology</div>
+  <div class="ti"><b>32</b> Tool surface design</div>
+  <div class="ti"><b>33</b> The capability model</div>
+  <div class="ti"><b>34</b> Authorization, scoping and idempotency</div>
+
+  <div class="tp">Part VII &mdash; Data Architecture</div>
+  <div class="ti"><b>35</b> The domain model</div>
+  <div class="ti"><b>36</b> Datastore selection per workload</div>
+  <div class="ti"><b>37</b> Device state: cache, twin and truth</div>
+  <div class="ti"><b>38</b> The event backbone</div>
+
+  <div class="tp">Part VIII &mdash; Integration Layer</div>
+  <div class="ti"><b>39</b> Room automation vendor adapters</div>
+  <div class="ti"><b>40</b> The on-premise edge gateway</div>
+  <div class="ti"><b>41</b> PMS integration</div>
+  <div class="ti"><b>42</b> Service request and ticketing</div>
+
+  <div class="tp">Part IX &mdash; Agentic Safety</div>
+  <div class="ti"><b>43</b> Threat model for a physical-world agent</div>
+  <div class="ti"><b>44</b> The action risk tier model</div>
+  <div class="ti"><b>45</b> Blast radius containment</div>
+  <div class="ti"><b>46</b> Prompt injection defence</div>
+  <div class="ti"><b>47</b> Grounding and hallucination control</div>
+  <div class="ti"><b>48</b> Duty of care and emergency escalation</div>
+  <div class="ti"><b>49</b> Abuse, privacy between guests, and misuse</div>
+  <div class="ti"><b>50</b> Kill switches and staff override</div>
+
+  <div class="tp">Part X &mdash; Security Architecture</div>
+  <div class="ti"><b>51</b> Device identity and lifecycle</div>
+  <div class="ti"><b>52</b> Network and cloud security</div>
+  <div class="ti"><b>53</b> Tenant isolation and blast radius</div>
+  <div class="ti"><b>54</b> Secrets, keys and credentials</div>
+
+  <div class="tp">Part XI &mdash; Compliance &amp; Governance</div>
+  <div class="ti"><b>55</b> The consent problem</div>
+  <div class="ti"><b>56</b> Controller / processor and the DPA</div>
+  <div class="ti"><b>57</b> Data classification and retention</div>
+  <div class="ti"><b>58</b> Residency and regional topology</div>
+  <div class="ti"><b>59</b> AI-specific regulation</div>
+  <div class="ti"><b>60</b> PCI, accessibility, life safety</div>
+  <div class="ti"><b>61</b> Certification roadmap and procurement</div>
+  <div class="ti"><b>62</b> Governance operating model</div>
+
+  <div class="tp">Part XII &mdash; Scale &amp; Unit Economics</div>
+  <div class="ti"><b>63</b> Demand model</div>
+  <div class="ti"><b>64</b> Capacity model</div>
+  <div class="ti"><b>65</b> Cost model and cost per room</div>
+  <div class="ti"><b>66</b> The optimisation ladder</div>
+
+  <div class="tp">Part XIII &mdash; Reliability</div>
+  <div class="ti"><b>67</b> SLIs and SLOs</div>
+  <div class="ti"><b>68</b> The degradation ladder</div>
+  <div class="ti"><b>69</b> Failure modes and responses</div>
+
+  <div class="tp">Part XIV &mdash; Observability &amp; Evaluation</div>
+  <div class="ti"><b>70</b> Tracing an agent turn</div>
+  <div class="ti"><b>71</b> Quality metrics</div>
+  <div class="ti"><b>72</b> The evaluation harness</div>
+  <div class="ti"><b>73</b> Red teaming</div>
+
+  <div class="tp">Part XV &mdash; Deployment</div>
+  <div class="ti"><b>74</b> Phase 1: Docker</div>
+  <div class="ti"><b>75</b> Phase 2: AWS production</div>
+  <div class="ti"><b>76</b> The cross-cloud question</div>
+  <div class="ti"><b>77</b> CI/CD and prompt release management</div>
+  <div class="ti"><b>78</b> Environments and property canaries</div>
+
+  <div class="tp">Part XVI &mdash; Delivery</div>
+  <div class="ti"><b>79</b> Roadmap</div>
+  <div class="ti"><b>80</b> Team shape</div>
+  <div class="ti"><b>81</b> Open questions requiring your input</div>
+
+  <div class="tp">Appendices</div>
+  <div class="ti"><b>A</b> Tool / MCP schemas</div>
+  <div class="ti"><b>B</b> Event schemas</div>
+  <div class="ti"><b>C</b> Property configuration schema</div>
+  <div class="ti"><b>D</b> Repository and module layout</div>
+  <div class="ti"><b>E</b> Glossary</div>
+</div>

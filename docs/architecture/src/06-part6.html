@@ -1,0 +1,244 @@
+<!-- ================= PART VI ================= -->
+<h1 class="part"><span class="pn">Part VI</span>MCP &amp; Tool Architecture</h1>
+
+<h2>30. Why an MCP gateway is mandatory</h2>
+
+<p>You already expose hotel, room, device and service data as MCP servers. The instinct is to point the agent at them
+directly &mdash; that is what MCP is for. For a single-tenant developer tool, that instinct is right. For a multi-tenant
+system that actuates physical devices in strangers' bedrooms, it is wrong, and the reasons are worth being precise
+about.</p>
+
+<table>
+  <thead><tr><th style="width:24%">Problem with direct agent&rarr;MCP</th><th style="width:38%">What goes wrong</th><th style="width:38%">What the gateway does instead</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Scope enforcement</strong></td><td>If the agent calls the Device State server directly, then the arguments &mdash; including which room &mdash; come from model output. A prompt injection or a model error can address another room. Nothing structural prevents it.</td><td>The gateway <strong>injects</strong> tenant/property/room from the authenticated TurnContext and <strong>strips</strong> any scope fields the model supplied. Cross-room addressing becomes impossible rather than unlikely.</td></tr>
+    <tr><td><strong>Per-tenant tool visibility</strong></td><td>Every hotel sees every tool. A property without curtains gets a curtain tool the model will happily call.</td><td>The gateway filters the advertised tool set by the property's capability manifest before the agent ever sees it.</td></tr>
+    <tr><td><strong>Result sanitisation</strong></td><td>Tool results flow straight into the model's context. A menu description edited by a hotel employee is an injection vector.</td><td>All results are wrapped in untrusted-content fencing and scanned before entering context (&sect;46).</td></tr>
+    <tr><td><strong>Connection management</strong></td><td>N servers × M concurrent turns = connection explosion, per-turn handshakes, unbounded latency.</td><td>Pooled, warm, multiplexed connections with per-server circuit breakers.</td></tr>
+    <tr><td><strong>Caching</strong></td><td>The property catalogue is read on every turn and changes weekly. Without a cache, it is the hottest and most wasteful query in the system.</td><td>Per-tool cache policy with declared TTLs and explicit invalidation on catalogue events.</td></tr>
+    <tr><td><strong>Uniform audit</strong></td><td>Each server logs differently, or not at all.</td><td>One place records every tool call, its arguments, its verdict, its latency and its result digest.</td></tr>
+    <tr><td><strong>Error shaping</strong></td><td>Raw vendor errors reach the model. &ldquo;INNCOM: ERR_0x8004&rdquo; produces either a hallucinated explanation or a useless apology.</td><td>Errors are normalised into a small vocabulary the model is trained by the prompt to handle: <code>NOT_AVAILABLE</code>, <code>NOT_PERMITTED</code>, <code>TEMPORARILY_UNREACHABLE</code>, <code>NEEDS_CONFIRMATION</code>, <code>INVALID_ARGUMENT</code>.</td></tr>
+    <tr><td><strong>Schema versioning</strong></td><td>Changing a tool schema breaks prompts silently and only in production.</td><td>Schemas are versioned artefacts pinned per prompt version, validated in CI by the eval harness.</td></tr>
+    <tr><td><strong>Confused deputy</strong></td><td>The agent's credentials are broad; a downstream server cannot tell whether a call reflects a guest's request or an injected instruction.</td><td>Per-turn, audience-bound, short-lived tokens carrying the exact scope, minted by the gateway.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D9 &mdash; MCP Gateway</div>
+  <p><strong>The agent holds exactly one MCP connection: to the internal MCP Gateway.</strong> Downstream MCP servers are
+  never addressable by the agent runtime. The gateway is the tool plane's control point &mdash; registry, filter,
+  scope injector, sanitiser, cache, circuit breaker and audit point &mdash; and it is where the &ldquo;the model
+  proposes, the platform disposes&rdquo; principle is made mechanical.</p>
+</div>
+
+<h2>31. MCP server topology</h2>
+
+<pre class="ascii">
+                         ┌──────────────────────────────────────────────────┐
+   AGENT RUNTIME ───────►│              MCP GATEWAY                         │
+   (one connection,      │  ┌────────────────────────────────────────────┐  │
+    Streamable HTTP)     │  │ tool registry (versioned schemas)          │  │
+                         │  │ per-tenant visibility filter               │  │
+                         │  │ scope injector  ← TurnContext (immutable)  │  │
+                         │  │ argument validator (reject unknown fields) │  │
+                         │  │ result sanitiser + untrusted fencing       │  │
+                         │  │ cache (per-tool TTL) · circuit breakers    │  │
+                         │  │ audit emitter · latency budget enforcement │  │
+                         │  └────────────────────────────────────────────┘  │
+                         └───┬───┬───┬───┬───┬───┬───┬───┬──────────────────┘
+        ┌────────────────────┘   │   │   │   │   │   │   └────────────────────┐
+        │        ┌───────────────┘   │   │   │   │   └───────────┐            │
+  ┌─────▼─────┐ ┌▼──────────┐ ┌──────▼┐ ┌▼──────┐ ┌▼─────────┐ ┌▼─────────┐ ┌▼──────────┐
+  │ property- │ │ device-   │ │service│ │ fnb-  │ │ pms-     │ │knowledge-│ │ guest-    │
+  │ catalog   │ │ state     │ │-req   │ │ order │ │ bridge   │ │ rag      │ │ prefs     │
+  │ MCP       │ │ MCP       │ │ MCP   │ │ MCP   │ │ MCP      │ │ MCP      │ │ MCP       │
+  └─────┬─────┘ └─┬─────────┘ └───┬───┘ └───┬───┘ └────┬─────┘ └────┬─────┘ └────┬──────┘
+        │         │               │         │          │            │            │
+        └─────────┴───────────────┴─────────┴──────────┴────────────┴────────────┘
+                                       │
+                          ┌────────────▼──────────────┐
+                          │  DOMAIN SERVICES + STORES │
+                          │  Aurora (RLS) · Redis · S3│
+                          └────────────┬──────────────┘
+                                       │  (device-state writes only)
+                          ┌────────────▼──────────────┐
+                          │  AUTOMATION ADAPTERS      │  ← plain internal services, NOT MCP
+                          │  inncom · interel · bacnet│
+                          └───────────────────────────┘
+</pre>
+
+<h3>31.1 Should vendor adapters be MCP servers?</h3>
+<p><strong>No.</strong> This is worth stating plainly because it is a tempting symmetry. MCP is a protocol for exposing
+capabilities <em>to a model</em>. The automation adapters must never be visible to the model &mdash; the entire point of
+principle P4 is that the agent reasons about &ldquo;a thermostat with a setpoint&rdquo; and has no concept of INNCOM.
+If <code>inncom-adapter</code> were an MCP server, its vendor-shaped tools would leak into the model's world and the
+abstraction would be dead within two sprints.</p>
+<p>The adapters sit <em>behind</em> the Device State MCP server, which presents a single vendor-neutral surface. Adding
+Schneider or Lutron support means writing an adapter and a capability mapping. The model's tool list does not
+change &mdash; and the prompt, the evals and the fast-lane grammar all keep working untouched.</p>
+
+<h3>31.2 Transport and deployment</h3>
+<table class="tight">
+  <thead><tr><th style="width:20%">Link</th><th style="width:22%">Transport</th><th style="width:58%">Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Agent &rarr; MCP Gateway</td><td>Streamable HTTP</td><td>Single stable endpoint; supports streaming results; works across process and later across network without a code change.</td></tr>
+    <tr><td>Gateway &rarr; MCP servers (Phase 1)</td><td>In-process</td><td>Same container. Zero network latency. The interface is still the MCP tool contract, so promotion is a config change.</td></tr>
+    <tr><td>Gateway &rarr; MCP servers (Phase 2+)</td><td>Streamable HTTP over mTLS in-VPC</td><td>Once servers are separately deployed. Avoid stdio in production &mdash; it couples process lifecycles and makes scaling and observability awkward.</td></tr>
+    <tr><td>Third-party / customer MCP servers</td><td>Streamable HTTP, OAuth 2.1 resource server, sandboxed</td><td><strong>Not in Phase 1 or 2.</strong> When a chain wants to plug in its own MCP server, it must be strictly quarantined: separate network egress policy, results treated as maximally untrusted, no T2+ tools, per-tenant allowlist. Admitting third-party tool servers into an agent that controls hardware is a security decision, not an integration decision.</td></tr>
+  </tbody>
+</table>
+
+<h2>32. Tool surface design</h2>
+
+<p>Tool design is the highest-leverage thing you will do in this system. A well-shaped surface makes a mid-sized model
+reliable; a badly shaped one makes the best model unreliable.</p>
+
+<h3>32.1 Design rules</h3>
+<table class="tight">
+  <thead><tr><th style="width:26%">Rule</th><th style="width:74%">Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Keep the surface under 25 tools</strong></td><td>Selection reliability degrades as the tool list grows, and every schema is input tokens on every turn. If you need more, you have a capability-modelling problem, not a tool-count problem.</td></tr>
+    <tr><td><strong>Name by guest intent, not by system</strong></td><td><code>climate.set_temperature</code>, not <code>hvac.write_setpoint_register</code>. The model reasons better about names that match how the request was phrased.</td></tr>
+    <tr><td><strong>Return the resulting state, always</strong></td><td>Every mutating tool returns the new observed state. This eliminates a read-back round-trip and lets the agent confirm truthfully.</td></tr>
+    <tr><td><strong>Make read tools cheap and batch them</strong></td><td>One <code>room.get_state()</code> returning everything beats five per-device reads. It is also what the pre-fetch calls.</td></tr>
+    <tr><td><strong>Errors must be instructions</strong></td><td><code>{"error":"NOT_AVAILABLE","detail":"This room has no motorised curtains.","suggestion":"Offer to open them manually or contact housekeeping."}</code> lets the model recover gracefully. A bare error code produces an apology and a dead end.</td></tr>
+    <tr><td><strong>Idempotency on every mutation</strong></td><td>Retries are inevitable across a flaky BMS link. Key on <code>(turn_id, tool, canonical_args)</code>.</td></tr>
+    <tr><td><strong>No tool takes a room or property identifier</strong></td><td>Scope is ambient (P2). If a schema has a <code>room_id</code> field, someone will eventually let the model fill it.</td></tr>
+    <tr><td><strong>Enumerate where possible</strong></td><td>Zones, categories and priorities as enums drawn from the room's actual configuration, not free strings. Constrains the model into validity.</td></tr>
+    <tr><td><strong>Free text only where judgement is required</strong></td><td>A maintenance description should be free text. A temperature should never be.</td></tr>
+  </tbody>
+</table>
+
+<h3>32.2 The tool surface</h3>
+<table class="tight">
+  <thead><tr><th style="width:23%">Tool</th><th style="width:9%">Type</th><th style="width:7%">Tier</th><th style="width:34%">Purpose</th><th style="width:27%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>room.get_state</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td>All controllable devices, current values, availability</td><td>Pre-fetched; cached 5&nbsp;s</td></tr>
+    <tr><td><code>lighting.set</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>On/off/brightness/scene per zone</td><td>Zones enumerated from manifest</td></tr>
+    <tr><td><code>climate.set_temperature</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Setpoint, bounded by property policy</td><td>Bounds enforced in PDP, not prompt</td></tr>
+    <tr><td><code>climate.set_mode</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Auto/cool/heat/fan/off</td><td></td></tr>
+    <tr><td><code>curtains.set</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Open/close/position</td><td>Absent if no capability</td></tr>
+    <tr><td><code>dnd.set</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>DND / make-up-room / off</td><td>Syncs to PMS and door indicator</td></tr>
+    <tr><td><code>tv.control</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Power, volume, input, channel</td><td></td></tr>
+    <tr><td><code>scene.apply</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Named scenes: sleep, work, movie, welcome</td><td>Per-property scene definitions</td></tr>
+    <tr><td><code>service.create_request</code></td><td>Write</td><td><span class="pill p-t2">T2</span></td><td>Housekeeping, maintenance, amenities</td><td>Duplicate detection; free-text description</td></tr>
+    <tr><td><code>service.get_status</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td>Open requests for this room</td><td>Pre-fetched</td></tr>
+    <tr><td><code>service.cancel_request</code></td><td>Write</td><td><span class="pill p-t2">T2</span></td><td>Cancel own request</td><td>Scope-checked to the room</td></tr>
+    <tr><td><code>fnb.get_menu</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td>Menu with availability and prices</td><td>Untrusted content &mdash; staff-authored</td></tr>
+    <tr><td><code>fnb.place_order</code></td><td>Write</td><td><span class="pill p-t3">T3</span></td><td>Order to folio</td><td><strong>Always requires spoken confirmation with the total</strong></td></tr>
+    <tr><td><code>fnb.get_order_status</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td></td><td></td></tr>
+    <tr><td><code>stay.get_info</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td>Checkout time, Wi-Fi, room type, folio total</td><td>Tokenised; no other guests' data reachable</td></tr>
+    <tr><td><code>stay.request_late_checkout</code></td><td>Write</td><td><span class="pill p-t2">T2</span></td><td>Request (not grant) later checkout</td><td>May be chargeable &rarr; T3 if a fee applies</td></tr>
+    <tr><td><code>stay.set_wakeup_call</code></td><td>Write</td><td><span class="pill p-t2">T2</span></td><td>Set/cancel wake-up</td><td>Confirm the time back explicitly</td></tr>
+    <tr><td><code>property.search_knowledge</code></td><td>Read</td><td><span class="pill p-t0">T0</span></td><td>FAQ, hours, policies, recommendations</td><td>Returns citations; untrusted content</td></tr>
+    <tr><td><code>staff.connect</code></td><td>Write</td><td><span class="pill p-t2">T2</span></td><td>Connect to front desk / concierge (call or ticket)</td><td>Always available, at every degradation level</td></tr>
+    <tr><td><code>staff.escalate_urgent</code></td><td>Write</td><td><span class="pill p-t4">T4</span></td><td>Urgent human escalation with context</td><td>Special path; see &sect;48</td></tr>
+    <tr><td><code>preferences.get</code> / <code>.set</code></td><td>R/W</td><td><span class="pill p-t1">T1</span></td><td>In-stay preferences</td><td>Consent-gated; absent if not opted in</td></tr>
+    <tr><td><code>media.control</code></td><td>Write</td><td><span class="pill p-t1">T1</span></td><td>Music playback (Spotify)</td><td>Existing integration</td></tr>
+  </tbody>
+</table>
+<p class="small">22 tools. A property typically sees 12&ndash;18 of them after capability filtering.</p>
+
+<h2>33. The capability model</h2>
+
+<p>This is the abstraction that makes &ldquo;a new hotel is configuration&rdquo; true, and it is the design most worth
+getting right on the first attempt because everything downstream depends on its shape.</p>
+
+<pre class="ascii">
+ GUEST SAYS            AGENT SEES                  MANIFEST SAYS                ADAPTER DOES
+ ─────────────────     ──────────────────────      ─────────────────────────    ─────────────────────────
+ "close the            curtains.set({              room 412 has capability      inncom-adapter:
+  curtains"             zone: "bedroom",            curtains.position with      → INNCOM object 0x2A
+                        position: 0 })              zones [bedroom, living]     → SET_LEVEL 0
+                                                    driver: inncom              → poll until confirmed
+                                                    object_map: {...}           → return {position: 0}
+
+ same words,           IDENTICAL tool call         room 88 has capability       interel-adapter:
+ different hotel                                    curtains.open_close only    → Interel REST
+                                                    (binary, no position)       → PUT /rooms/88/blinds
+                                                    driver: interel             → {state:"closed"}
+                                                                                → return {position: 0}
+
+ same words,           TOOL NOT PRESENT            room 12 has no curtain       (nothing — the model
+ hotel without          in the model's tool         capability                  could not have proposed
+ motorised curtains     surface at all                                          it)
+                       → model answers from
+                         knowledge: "these
+                         curtains are manual"
+</pre>
+
+<h3>33.1 The three levels</h3>
+<ol>
+  <li><strong>Capability</strong> &mdash; an abstract, vendor-neutral ability with a typed contract:
+  <code>climate.setpoint</code> with a range and unit; <code>curtains.position</code> with 0&ndash;100;
+  <code>curtains.open_close</code> as binary. Capabilities are defined once, globally, and versioned.</li>
+  <li><strong>Capability manifest</strong> &mdash; per room (usually per room <em>type</em>, with per-room overrides),
+  declaring which capabilities exist, which zones they apply to, what the bounds are, and which driver serves them.
+  This is data, authored during onboarding, versioned, and diffable.</li>
+  <li><strong>Driver mapping</strong> &mdash; per vendor, the translation from capability operation to concrete
+  protocol operation. Lives entirely inside the adapter. The model, the prompt, the evals and the fast lane never see
+  it.</li>
+</ol>
+
+<div class="box decision">
+  <div class="bt">Decision D10 &mdash; Capability model</div>
+  <p>The tool surface presented to the model is <strong>generated from the room's capability manifest at context-assembly
+  time</strong>. A capability the room does not have produces no tool, so the model cannot propose it, so no runtime
+  check is needed and no apology is ever generated for an action that was never possible. Graceful degradation between
+  capability levels (position control vs binary open/close) is handled in the adapter, not by the model.</p>
+  <p>The corollary: <strong>the manifest is a first-class product artefact.</strong> It needs an authoring tool, a
+  validation schema, a diff view, a version history and a conformance test suite that can be run against a real property
+  before go-live. Budget for this properly &mdash; it is the thing that determines whether onboarding takes five days or
+  five weeks.</p>
+</div>
+
+<h2>34. Authorization, scoping and idempotency</h2>
+
+<h3>34.1 Scope injection</h3>
+<pre class="json">// What the model emits
+{ "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "target_c": 23.0, "room_id": "999" } }   ← model-supplied scope
+
+// What the gateway executes  — model-supplied scope fields are STRIPPED, not validated
+{ "tool": "climate.set_temperature",
+  "args": { "zone": "bedroom", "target_c": 23.0 },
+  "scope": {                                    ← injected from the authenticated TurnContext
+     "tenant_id":   "t_marriott_apac",
+     "property_id": "p_blr_whitefield",
+     "room_id":     "r_412",                    ← from the device certificate, never from the model
+     "device_id":   "d_8f2a...",
+     "turn_id":     "turn_01J...",
+     "actor":       "guest",
+     "consent":     { "voice": true, "prefs": false }
+  },
+  "idempotency_key": "sha256(turn_01J... | climate.set_temperature | {zone:bedroom,target_c:23.0})"
+}</pre>
+<p><strong>Stripped, not validated</strong> is deliberate. Validating a model-supplied <code>room_id</code> against the
+real one means the field exists in the schema, which means it can be populated, which means somebody will one day
+&ldquo;temporarily&rdquo; trust it for a staff feature. Removing the field from the surface entirely removes the class
+of bug.</p>
+
+<h3>34.2 Token model</h3>
+<table class="tight">
+  <thead><tr><th style="width:22%">Credential</th><th style="width:16%">Lifetime</th><th style="width:20%">Audience</th><th style="width:42%">Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Device certificate (X.509)</td><td>1 year, rotating</td><td>Device Gateway</td><td>Proves device identity; the root of all scope</td></tr>
+    <tr><td>Turn token (JWT)</td><td><strong>60&nbsp;s</strong></td><td>MCP Gateway</td><td>Carries the immutable TurnContext; minted per turn by the orchestrator</td></tr>
+    <tr><td>Tool token</td><td><strong>10&nbsp;s</strong></td><td>One specific MCP server</td><td>Audience-bound so a compromised server cannot replay against another &mdash; the confused-deputy defence</td></tr>
+    <tr><td>Adapter credential</td><td>Rotated per policy</td><td>One property's head-end</td><td>Held only by the adapter, never by the agent; scoped to one property</td></tr>
+    <tr><td>PMS credential</td><td>Per property</td><td>One PMS tenant</td><td>Minimum scopes; never includes payment-instrument access</td></tr>
+  </tbody>
+</table>
+
+<h3>34.3 Idempotency and retry</h3>
+<ul>
+  <li>Every mutating tool call carries an idempotency key derived from <code>(turn_id, tool, canonical_args)</code>.
+  Replaying the same key returns the original result rather than acting twice.</li>
+  <li>Retries are <strong>only</strong> automatic for tier T0&ndash;T1 (read and reversible-physical). T2 and above are
+  never silently retried &mdash; a duplicate maintenance ticket is annoying, a duplicate $200 room-service order is a
+  chargeback.</li>
+  <li>Retry budget: 2 attempts, 150&nbsp;ms and 400&nbsp;ms, jittered, and only within the turn's wall-clock budget.</li>
+  <li>Circuit breaker per <code>(property, vendor)</code>: 5 failures in 30&nbsp;s opens it for 60&nbsp;s. While open, the
+  capability is reported as <code>TEMPORARILY_UNREACHABLE</code> and the agent offers the staff path. One hotel's dead
+  head-end must never consume the adapter's capacity for every other property.</li>
+</ul>

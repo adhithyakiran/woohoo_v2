@@ -1,0 +1,239 @@
+<!-- ================= PART XV ================= -->
+<h1 class="part"><span class="pn">Part XV</span>Deployment</h1>
+
+<h2>74. Phase 1 &mdash; Docker</h2>
+
+<p>The Docker phase is not a throwaway. It is the environment every engineer develops in, the environment CI runs, and
+the environment an on-premise pilot ships in when a chain insists on it. Design it as a real deployment target.</p>
+
+<pre class="ascii">
+ docker-compose.yml
+ ├── device-gateway          :8443   WSS + mTLS (dev CA)             1 replica
+ ├── woohoo-core             :8080   orchestrator/router/agent/mcp/domain services
+ ├── policy-service          :8081   PDP
+ ├── adapter-simulator       :8090   full-fidelity fake BMS — the default for all dev/CI
+ ├── adapter-inncom          :8091   real adapter, points at a lab head-end or the simulator
+ ├── edge-gateway            :8092   runs the same image that ships to properties
+ ├── postgres:16 + pgvector  :5432   catalogue, requests, knowledge, prefs
+ ├── redis:7                 :6379   session + state cache
+ ├── nats (jetstream)        :4222   event backbone
+ ├── minio                   :9000   S3-compatible audit store (Object Lock supported)
+ ├── opensearch              :9200   audit index
+ ├── otel-collector          :4317   traces/metrics
+ ├── jaeger                  :16686  trace UI
+ ├── grafana + prometheus    :3000   dashboards (same dashboards as production)
+ └── device-simulator        :8099   headless fake hub — replays audio fixtures, drives full turns
+
+ make up          bring up the stack, seed a demo property with 3 room types and 12 rooms
+ make eval        run golden + adversarial + safety suites against the running stack
+ make turn "turn on the lights"    drive one turn end-to-end through the device simulator
+ make conformance PROPERTY=demo    run the capability conformance suite
+</pre>
+
+<div class="box good">
+  <div class="bt">Two things to insist on in Phase 1</div>
+  <p><strong>The device simulator and the adapter simulator are first-class deliverables</strong>, not test scaffolding.
+  Without them, every engineer needs hardware and a hotel, and the team's velocity is capped by physical logistics. With
+  them, the whole system is testable on a laptop and in CI.</p>
+  <p><strong>Same dashboards, same instrumentation, same images as production.</strong> If the Docker stack uses
+  different observability than AWS, you will debug production with tools you have never used. OpenTelemetry everywhere
+  makes this free.</p>
+</div>
+
+<h2>75. Phase 2 &mdash; AWS production</h2>
+
+<pre class="ascii">
+ ┌───────────────────────── AWS ACCOUNT STRUCTURE (Organizations) ──────────────────────────────┐
+ │  management │ security/logging │ shared-services (CI, ECR, private CA) │ cell-eu │ cell-in │ │
+ │              cell-me │ cell-us   ← each cell is a separate account; blast radius = one cell  │
+ └──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ ┌────────────────────── INSIDE ONE CELL (e.g. cell-in, ap-south-1) ────────────────────────────┐
+ │                                                                                              │
+ │   Internet ──► Route53 ──┬──► NLB (TCP 443) ──► device-gateway (Fargate, 2+ AZ)              │
+ │                          │      mTLS terminated at the app so the cert can be inspected      │
+ │                          └──► ALB + WAF ──────► staff/admin API (Fargate)                    │
+ │                                                                                              │
+ │   PRIVATE SUBNETS (multi-AZ)                                                                 │
+ │     woohoo-core (Fargate svc, autoscale on concurrent turns, not CPU)                        │
+ │     policy-service (Fargate)                                                                 │
+ │     agent-runtime (Fargate — carved out in Phase 2)                                          │
+ │     automation-adapter-{inncom,interel,bacnet} (Fargate, one service each)                   │
+ │     pms-bridge (Fargate — carved out early, flaky upstreams)                                 │
+ │                                                                                              │
+ │   DATA                                                                                       │
+ │     Aurora PostgreSQL Serverless v2 (multi-AZ, RLS)  ElastiCache Redis (multi-AZ)            │
+ │     S3 + Object Lock (audit)   OpenSearch Service (audit index)   S3 (transcripts, TTL)      │
+ │                                                                                              │
+ │   PLATFORM                                                                                   │
+ │     EventBridge + SQS   Secrets Manager   KMS (per-tenant CMKs)   AWS Private CA             │
+ │     IoT Core (device telemetry + shadow, MQTT)   ECR   Systems Manager                       │
+ │     AMP + AMG (Prometheus/Grafana)   CloudWatch Logs (short retention) + S3 archive          │
+ │                                                                                              │
+ │   EGRESS: NAT + explicit allowlist ──► Vertex AI (regional) · ASR · TTS · PMS cloud          │
+ │   VPC endpoints for S3, Secrets Manager, KMS, ECR — keep that traffic off the internet       │
+ └──────────────────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Choice</th><th style="width:20%">Decision</th><th style="width:58%">Reasoning</th></tr></thead>
+  <tbody>
+    <tr><td>Compute</td><td><strong>ECS Fargate</strong></td><td>Long-lived tasks, no cluster to operate, right shape for a small team. EKS only when you genuinely need its extension points &mdash; the operational overhead is not free and you do not have the throughput that justifies it. <strong>No Lambda on the voice path:</strong> cold starts and the 15-minute/connection model are wrong for persistent WebSockets and latency-critical turns.</td></tr>
+    <tr><td>Device ingress</td><td><strong>NLB</strong>, mTLS terminated at the app</td><td>API Gateway WebSocket has connection duration limits and per-message pricing that is unattractive at 100k persistent connections. Terminating mTLS in the app is what lets the gateway inspect the client certificate to derive scope &mdash; the foundation of P2.</td></tr>
+    <tr><td>Autoscaling signal</td><td>Concurrent turns and connection count</td><td>CPU is a poor proxy for an IO-bound, LLM-latency-dominated workload. Scaling on CPU will under-provision exactly when the LLM is slow.</td></tr>
+    <tr><td>Database</td><td>Aurora PostgreSQL Serverless v2</td><td>Handles the strong diurnal pattern without paying peak all day. RLS gives the tenant-isolation backstop.</td></tr>
+    <tr><td>Device telemetry</td><td>AWS IoT Core (MQTT)</td><td>Purpose-built for fleet telemetry, shadows and certificate management. Keep it off the audio path.</td></tr>
+    <tr><td>Device certificates</td><td>AWS Private CA</td><td>Managed issuance and revocation, integrates with IoT Core. Alternative: your own CA if a chain requires key custody.</td></tr>
+    <tr><td>Bedrock</td><td><strong>Not used</strong></td><td>The reasoning model is Gemini on Vertex. Bedrock would only enter as a non-Google fallback provider (D8), and even then only if the fallback is exercised.</td></tr>
+    <tr><td>IaC</td><td><strong>Terraform</strong></td><td>One module set, instantiated per cell. CDK was considered; Terraform wins on multi-account, multi-region cell instantiation and on hiring. No console changes in production, enforced by drift detection.</td></tr>
+  </tbody>
+</table>
+
+<h2>76. The cross-cloud question</h2>
+
+<p>The agent runtime will sit on AWS while the model sits on Google Cloud. This deserves a decision rather than drift.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Option</th><th style="width:39%">Pros</th><th style="width:39%">Cons</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A. All on AWS, call Vertex over the internet</strong> <span class="pill p-must">Chosen</span></td><td>One estate to operate, secure and certify. One IaC stack. Simplest for a small team. Egress cost is negligible (text only).</td><td>Adds internet RTT to the LLM call &mdash; typically 20&ndash;60&nbsp;ms when both are in the same geography. Cross-cloud auth to manage.</td></tr>
+    <tr><td>B. Agent runtime on GCP, rest on AWS</td><td>Lowest LLM latency</td><td>Two clouds to secure, certify, monitor and pay for; a network hop for every tool call instead of every LLM call &mdash; and there are more tool calls than LLM calls. Doubles the compliance surface.</td></tr>
+    <tr><td>C. All on GCP</td><td>Single cloud, lowest LLM latency</td><td>Abandons the AWS plan, the IoT Core fit and existing AWS familiarity. Only reconsider if Gemini becomes a much deeper dependency.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D20 &mdash; Option A, with measurement</div>
+  <p>Keep everything on AWS and call Vertex AI over the internet from the same geography (ap-south-1&nbsp;&rarr;
+  asia-south1, eu-west-1&nbsp;&rarr; europe-west1, and so on). Authenticate with <strong>Workload Identity
+  Federation</strong> so no Google service-account key file exists anywhere in the estate.</p>
+  <p><strong>Measure the added latency in the pilot rather than assuming it.</strong> Instrument the
+  <code>llm.generate</code> span's TTFT specifically and compare against a same-cloud control. If cross-cloud RTT turns
+  out to consume more than ~15% of the agentic lane's p95 budget, revisit &mdash; but do not pre-optimise a hop that is
+  probably 40&nbsp;ms in a 1,900&nbsp;ms budget.</p>
+</div>
+
+<h2>77. CI/CD and prompt release management</h2>
+
+<p>The most important idea in this section: <strong>a prompt change is a production deployment.</strong> Systems that
+treat prompts as content rather than code fail in production in ways that are hard to diagnose, because the artefact
+that changed was never versioned.</p>
+
+<pre class="ascii">
+ ARTEFACT TYPES — all versioned, all released the same way
+ ├── container images        (services)
+ ├── prompt bundles          (Layer 0/1 templates, refusal policy, response templates)
+ ├── tool schemas            (the MCP tool surface definitions)
+ ├── model pins              (model IDs + generation config per lane)
+ ├── policy bundles          (risk tiers, property policy defaults, PDP rules)
+ ├── capability manifests    (per property — released per property, not fleet-wide)
+ └── phrase packs            (per property voice × language, pushed to devices)
+
+ PIPELINE
+   commit ──► build + unit ──► integration (against simulators) ──► EVAL GATE ──► staging
+                                                                       │
+                       golden 100% · adversarial 0 failures · safety 0 failures
+                       latency within +10% · capability matrix green
+                                                                       ▼
+   staging soak (24h, synthetic traffic) ──► CANARY PROPERTY (1 real hotel, opted in)
+                                                  │  24–72h, watched metrics:
+                                                  │  fallback rate, escalation rate, task success,
+                                                  │  latency p95, policy denials, guest ratings
+                                                  ▼
+   progressive rollout: 5% properties → 25% → 100%, with automatic halt on metric regression
+                                                  ▼
+   ROLLBACK: pin previous prompt/model/policy version — config change, effective next turn,
+             no deploy required. Target: under 60 seconds from decision to effect.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Rollback must not require a deploy</div>
+  <p>When a prompt change starts producing bad behaviour across 40,000 rooms at 22:00 on a Friday, you need to revert in
+  under a minute. If reverting means rebuilding a container and waiting for a rolling deploy, you will instead spend
+  fifteen minutes with a live incident. Make prompt, model and policy versions <strong>runtime configuration resolved
+  per turn</strong>, with a pin that propagates through the same sub-10-second config channel as the kill switches.</p>
+</div>
+
+<h2>78. Environments and property canaries</h2>
+<table class="tight">
+  <thead><tr><th style="width:16%">Environment</th><th style="width:22%">Purpose</th><th style="width:20%">Data</th><th style="width:20%">Automation target</th><th style="width:22%">Who uses it</th></tr></thead>
+  <tbody>
+    <tr><td><code>local</code></td><td>Development</td><td>Seeded synthetic</td><td>Simulator</td><td>Engineers</td></tr>
+    <tr><td><code>ci</code></td><td>Automated gates</td><td>Fixtures</td><td>Simulator</td><td>Pipeline</td></tr>
+    <tr><td><code>staging</code></td><td>Integration + soak</td><td>Synthetic + lab hardware</td><td><strong>Lab head-end</strong> &mdash; one real INNCOM and one real Interel unit on a bench</td><td>Engineers, QA</td></tr>
+    <tr><td><code>canary</code></td><td>Real-world validation</td><td>Real, one opted-in property</td><td>Real BMS</td><td>Delivery + that hotel</td></tr>
+    <tr><td><code>prod</code></td><td>&mdash;</td><td>Real</td><td>Real</td><td>Everyone</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">Buy the lab hardware</div>
+  <p>A bench with a real INNCOM controller and a real Interel controller, wired to actual dimmers, a thermostat and a
+  curtain motor, is one of the highest-return purchases on this project. Vendor systems have undocumented behaviours
+  &mdash; write timing, acknowledgement semantics, priority handling, what happens when two writes race &mdash; that no
+  simulator will reproduce until you have observed them. Discovering them in a guest room is expensive; discovering them
+  on a bench is Tuesday.</p>
+</div>
+
+<!-- ================= PART XVI ================= -->
+<h1 class="part"><span class="pn">Part XVI</span>Delivery</h1>
+
+<h2>79. Roadmap</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:11%">Phase</th><th style="width:12%">Duration</th><th style="width:44%">Deliverables</th><th style="width:33%">Exit criteria</th></tr></thead>
+  <tbody>
+    <tr><td><strong>0 &mdash; Foundations</strong></td><td>3&ndash;4 weeks</td><td>Monorepo, CI, Terraform skeleton, Docker stack, OTel wiring, Postgres schema for tenant/property/room/device, capability model definition, <strong>adapter simulator</strong>, <strong>device simulator</strong>, eval harness skeleton with 50 golden cases</td><td>A fake turn runs end to end through the simulators with a full trace, and CI is green</td></tr>
+    <tr><td><strong>1 &mdash; Agentic core</strong></td><td>5&ndash;7 weeks</td><td>Session orchestrator, three-lane router, agent runtime on Gemini, MCP gateway, PDP with tiers T0&ndash;T3, property-catalog + device-state + service-request MCP servers, ASR/TTS adapters, audit store</td><td>Full agentic turn against the simulator, policy verdicts recorded, golden suite &ge;90%, adversarial suite zero failures</td></tr>
+    <tr><td><strong>2 &mdash; Device + edge</strong></td><td>5&ndash;7 weeks<br><span class="small">(parallel with 1)</span></td><td>Android refactor: credential removal, WebSocket transport, device-side endpointing, phrase cache, X.509 provisioning, barge-in, offline grammar. Edge gateway with tunnel, shadow, fallback, outbox. First real vendor adapter (whichever the pilot property runs)</td><td>Real device in a real room performs a real automation action end to end, and still works with the WAN unplugged</td></tr>
+    <tr><td><strong>3 &mdash; Pilot</strong></td><td>6&ndash;8 weeks</td><td>One property live. Onboarding tooling and capability-manifest authoring. Conformance suite. Staff notification path. F&amp;B ordering with T3 confirmation. PMS bridge for stay context and checkout. Quality review cadence started.</td><td>Task success &ge;90%, fallback rate &lt;10%, zero safety incidents, GM would keep it</td></tr>
+    <tr><td><strong>4 &mdash; Productisation</strong></td><td>8&ndash;10 weeks</td><td>AWS Phase-2 architecture, multi-tenancy with RLS, second vendor adapter, second regional cell, kill switches, progressive rollout, DPA/DPIA/security pack, SOC 2 evidence collection started, second and third properties</td><td>A new property onboards in &le;5 working days without engineering involvement</td></tr>
+    <tr><td><strong>5 &mdash; Scale</strong></td><td>Ongoing</td><td>Carve-outs by split trigger, remaining cells, cross-stay preferences with consent, Gemini Live conversational lane, SOC 2 Type II, ISO 27001, cost optimisation ladder</td><td>50 properties, SLOs met, unit economics confirmed against real turn volumes</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Sequencing advice</div>
+  <p><strong>Phases 1 and 2 must run in parallel</strong>, and Phase 2 is the one that will slip &mdash; hardware,
+  vendor access and firmware always take longer than expected. Start the device and edge work first if you can only
+  start one, because the agentic core can be developed against simulators indefinitely while the device work cannot.</p>
+  <p><strong>Do not let the pilot property be a flagship.</strong> Pick a mid-tier property with a co-operative
+  engineering manager, a modern BMS install, and a GM who will tolerate a bad week. Your first flagship deployment
+  should be your fourth property, not your first.</p>
+</div>
+
+<h2>80. Team shape</h2>
+<table class="tight">
+  <thead><tr><th style="width:26%">Role</th><th style="width:10%">Count</th><th style="width:64%">Focus</th></tr></thead>
+  <tbody>
+    <tr><td>Backend / platform engineer</td><td>2&ndash;3</td><td>Core services, MCP gateway, PDP, data layer, AWS and Terraform</td></tr>
+    <tr><td>Agent / AI engineer</td><td>1&ndash;2</td><td>Prompt architecture, tool design, router, evals, quality loop. <strong>Owns the weekly quality review.</strong></td></tr>
+    <tr><td>Android / embedded engineer</td><td>1&ndash;2</td><td>Device refactor, audio pipeline, provisioning, OTA</td></tr>
+    <tr><td>Integrations engineer</td><td>1&ndash;2</td><td>Vendor adapters, edge gateway, PMS. <strong>Underestimate this at your peril</strong> &mdash; it is the work that determines onboarding speed.</td></tr>
+    <tr><td>Solutions / delivery engineer</td><td>1</td><td>Property onboarding, manifest authoring, conformance, hotel relationships. Grows fastest with property count.</td></tr>
+    <tr><td>Security / compliance</td><td>0.5&ndash;1 (or vCISO)</td><td>Certifications, questionnaires, penetration tests, DPIAs</td></tr>
+    <tr><td>SRE</td><td>0.5&ndash;1 (from Phase 4)</td><td>Fleet health, on-call, cost, DR</td></tr>
+  </tbody>
+</table>
+
+<h2>81. Open questions requiring your input</h2>
+
+<p>These are the decisions this document could not make for you. Each blocks or reshapes a chunk of the build.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:5%">#</th><th style="width:35%">Question</th><th style="width:32%">Why it matters</th><th style="width:28%">Default if unanswered</th></tr></thead>
+  <tbody>
+    <tr><td>Q1</td><td><strong>What is the actual turn volume per occupied room per day</strong> in the current V1 deployment?</td><td>Drives the entire cost model. It is the number I am least confident in.</td><td>Assume 6; instrument from the pilot</td></tr>
+    <tr><td>Q2</td><td>Which automation vendor does the pilot property run, and what integration surface does that specific installation expose?</td><td>Determines which adapter is built first and how hard it is</td><td>Build the simulator plus INNCOM</td></tr>
+    <tr><td>Q3</td><td>Do any current or prospective customers have a <strong>contractual data-residency requirement</strong>?</td><td>Determines whether cell 2 is built in Phase 4 or Phase 5, and whether edge ASR moves up the roadmap</td><td>Build <code>in</code> first, <code>eu</code> second</td></tr>
+    <tr><td>Q4</td><td>Is there an existing edge/gateway appliance in properties today, or does the hub talk to the BMS directly?</td><td>Decides whether the edge gateway is new hardware or new software on existing hardware &mdash; a large cost and timeline difference</td><td>Assume new appliance</td></tr>
+    <tr><td>Q5</td><td>Which PMS platforms are in play across current customers?</td><td>PMS adapters are per-family and each is real work</td><td>Opera Cloud (OHIP) first</td></tr>
+    <tr><td>Q6</td><td>Do hotels want tickets in <strong>their existing</strong> system (HotSOS, Quore, Alice) or in Woohoo?</td><td>Changes the service-request module from a product into an integration &mdash; and hotels rarely adopt a second queue</td><td>Build both: native store plus push adapters</td></tr>
+    <tr><td>Q7</td><td>What is the commercial model &mdash; per room per month, per property, or bundled with hardware?</td><td>Determines how hard to push cost optimisation and whether per-tenant cost attribution is a launch requirement</td><td>Per room per month; build attribution now</td></tr>
+    <tr><td>Q8</td><td>Is cross-stay personalisation a committed roadmap item?</td><td>It is the single largest privacy escalation in the product and needs the governance model operating first</td><td>Deferred to Phase 5, opt-in only</td></tr>
+    <tr><td>Q9</td><td>What languages must launch support, per market?</td><td>Affects ASR vendor choice, TTS voices, phrase packs, and every eval suite</td><td>EN + HI for <code>in</code>; EN + AR for <code>me</code></td></tr>
+    <tr><td>Q10</td><td>Does the current hub hardware have a <strong>hardware</strong> mic mute and a driver-controlled LED?</td><td>If not, it is a hardware revision, and the compliance story in &sect;55 weakens materially</td><td>Assume software mute today; specify hardware mute for the next revision</td></tr>
+    <tr><td>Q11</td><td>Who is accountable for agent behaviour &mdash; i.e. who signs off that a prompt change is safe to ship?</td><td>&sect;62.4 needs a name, and a chain's auditor will ask for one</td><td>Head of Product</td></tr>
+    <tr><td>Q12</td><td>Are Twilio video, Spotify and the F&amp;B device UI staying in V2 as-is?</td><td>They are significant surface area not covered by this architecture and may need their own integration into the agent's tool surface</td><td>Retain as device features; expose only <code>media.control</code> to the agent initially</td></tr>
+  </tbody>
+</table>

@@ -1,0 +1,165 @@
+<!-- ================= PART III ================= -->
+<h1 class="part"><span class="pn">Part III</span>Service Decomposition</h1>
+
+<h2>10. Modular monolith vs microservices &mdash; the honest answer</h2>
+
+<p>You asked whether this should be modular, whether it should be microservices, and which components must be split.
+The honest answer has three parts, and the middle one is the one most teams get wrong.</p>
+
+<h3>10.1 It must be modular. That is not the same as distributed.</h3>
+<p>Modularity is non-negotiable here, because the whole product thesis is that a new hotel is configuration rather than
+code. That requires hard internal boundaries: the agent must not be able to reach into the INNCOM adapter, the F&amp;B
+service must not read the property catalogue's tables directly, and vendor knowledge must be physically incapable of
+leaking into the reasoning layer. But every one of those boundaries can be enforced by a module system, a package
+structure and a lint rule &mdash; they do not require a network hop.</p>
+
+<h3>10.2 Most of it should <em>not</em> be separate services at Phase 1.</h3>
+<p>Splitting a system into microservices buys you three things: independent scaling, independent deployment, and failure
+isolation. It costs you distributed transactions, network failure modes between every pair of components, N&times;
+observability plumbing, N&times; CI pipelines, and &mdash; the one that actually kills small teams &mdash; the inability to
+change an interface without a coordinated multi-repo release.</p>
+
+<p>At Phase 1 you have one pilot property and a handful of engineers. The scaling asymmetries that justify a split do
+not exist yet, and the interfaces are going to change weekly because nobody has yet learned what the agent actually
+needs from the catalogue. Splitting now means paying the full cost of distribution to buy benefits you cannot use.</p>
+
+<h3>10.3 But four things must be separate <em>from day one</em>, for reasons that are not about scale.</h3>
+
+<table>
+  <thead><tr><th style="width:22%">Must be separate</th><th style="width:44%">Why &mdash; and it is never &ldquo;for scale&rdquo;</th><th style="width:34%">What breaks if you don't</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Device Gateway</strong></td><td>Fundamentally different runtime shape: thousands of long-lived stateful WebSocket connections with strict memory-per-connection behaviour, versus request/response business logic. It also has a different deploy cadence &mdash; you must be able to ship agent logic ten times a day without dropping every device connection in the fleet.</td><td>Every backend deploy disconnects 10,000 devices. Reconnect storms. Guests hear &ldquo;I'm having trouble&rdquo; during every release.</td></tr>
+    <tr><td><strong>Edge Gateway</strong></td><td>It runs on someone else's premises, on hardware you ship, on a release cadence measured in months, and it must function when the cloud is unreachable. It is a different <em>product</em>.</td><td>You cannot control room lights when the hotel's WAN drops &mdash; which, in hotels, is weekly.</td></tr>
+    <tr><td><strong>Automation Adapters</strong></td><td>Isolation of blast radius and of dependency hell. The INNCOM integration will need a specific old TLS stack or a vendor SDK; the Interel one will need something incompatible. More importantly, when one vendor's head-end hangs, it must not exhaust the thread pool serving every other property.</td><td>One hotel's flaky BMS takes down voice control for every hotel. This <em>will</em> happen; it is the most likely production incident.</td></tr>
+    <tr><td><strong>Policy Decision Point</strong></td><td>Not for scale &mdash; for auditability and review. The PDP is the component a hotel chain's security team will ask to see. It must be independently versionable, independently testable, and small enough that a human can read all of it. Keeping it separate makes &ldquo;the agent bypassed policy&rdquo; a structurally impossible class of bug rather than a code-review question.</td><td>Policy logic diffuses into the agent runtime, becomes untestable, and the &ldquo;the model cannot decide its own authority&rdquo; guarantee quietly stops being true.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D13 &mdash; Service granularity</div>
+  <p><strong>Phase 1 ships five deployable units:</strong> (1) <code>woohoo-core</code>, a modular monolith containing the
+  orchestrator, router, agent runtime, MCP gateway and all domain services; (2) <code>device-gateway</code>;
+  (3) <code>policy-service</code>; (4) one <code>automation-adapter-*</code> per vendor; (5) <code>edge-gateway</code>
+  (ships to properties). Everything inside <code>woohoo-core</code> communicates through explicit in-process interfaces
+  that are <em>shaped like network calls</em> &mdash; typed request/response, no shared mutable state, no cross-module
+  database access &mdash; so that promoting any module to a service later is a transport change, not a redesign.</p>
+</div>
+
+<h2>11. The service catalogue</h2>
+
+<p>Every module and service, with the data it owns, its scaling profile, and whether it starts inside the monolith.</p>
+
+<table class="tight">
+  <thead><tr>
+    <th style="width:15%">Module / Service</th><th style="width:24%">Owns (data &amp; decisions)</th>
+    <th style="width:8%">Sync/Async</th><th style="width:13%">Scaling profile</th>
+    <th style="width:9%">Phase 1</th><th style="width:9%">Phase 2</th><th style="width:22%">Split trigger</th>
+  </tr></thead>
+  <tbody>
+    <tr><td><strong>Device Gateway</strong></td><td>Connection registry, per-device rate state. Owns no business data.</td><td>Sync + stream</td><td>Memory &amp; FD per connection; ~5k conns/instance</td><td>Service</td><td>Service</td><td>&mdash; already separate</td></tr>
+    <tr><td><strong>Session Orchestrator</strong></td><td>Turn lifecycle state (in Redis). Owns the degradation ladder.</td><td>Sync</td><td>IO-bound, long-lived per turn</td><td>Module</td><td>Service</td><td>&gt;2,000 concurrent turns, or deploy cadence conflicts with agent runtime</td></tr>
+    <tr><td><strong>Router</strong></td><td>Lane rules, fast-path grammar, confidence thresholds.</td><td>Sync</td><td>CPU-light</td><td>Module</td><td>Module</td><td>Never &mdash; too small to justify</td></tr>
+    <tr><td><strong>Agent Runtime</strong></td><td>Prompt assembly, tool loop, token budgets. Owns nothing durable.</td><td>Sync</td><td>Bursty, IO-bound; long tail on LLM latency</td><td>Module</td><td>Service</td><td>When prompt/model releases need to ship independently of domain code &mdash; likely within 6 months</td></tr>
+    <tr><td><strong>Policy (PDP)</strong></td><td>Risk tier table, property policy, quiet hours, spend caps, confirmation rules.</td><td>Sync</td><td>CPU-light, p99 &lt;5&nbsp;ms required</td><td>Service</td><td>Service</td><td>&mdash; separate by design</td></tr>
+    <tr><td><strong>MCP Gateway</strong></td><td>Tool registry, per-tenant tool visibility, sanitisation rules.</td><td>Sync</td><td>IO fan-out</td><td>Module</td><td>Service</td><td>When third-party / customer-supplied MCP servers are admitted &mdash; then it becomes a security boundary</td></tr>
+    <tr><td><strong>ASR Adapter</strong></td><td>Vendor selection, phrase-hint assembly, confidence normalisation.</td><td>Stream</td><td>Stream concurrency; vendor connection limits</td><td>Module</td><td>Service</td><td>When you self-host an ASR model (GPU nodes ≠ web nodes)</td></tr>
+    <tr><td><strong>TTS Adapter</strong></td><td>Voice config per property, phrase cache.</td><td>Stream</td><td>IO-bound</td><td>Module</td><td>Module</td><td>Same as ASR &mdash; only on self-hosting</td></tr>
+    <tr><td><strong>Property Catalog</strong></td><td><strong>Source of truth:</strong> tenants, properties, floors, rooms, zones, devices, labels, capability manifests, property config.</td><td>Sync</td><td>Read-heavy, highly cacheable</td><td>Module</td><td>Module</td><td>Rarely &mdash; but it is the hottest read path; cache aggressively instead</td></tr>
+    <tr><td><strong>Device State</strong></td><td><strong>Source of truth:</strong> reported &amp; desired state per device, shadow, state history.</td><td>Sync + async ingest</td><td>Read-heavy + high-volume writes from telemetry</td><td>Module</td><td>Service</td><td>When state-change ingest exceeds ~500 events/s &mdash; write path starves reads</td></tr>
+    <tr><td><strong>Service Request</strong></td><td><strong>Source of truth:</strong> tickets, SLA timers, assignment, status history.</td><td>Sync + async</td><td>Balanced</td><td>Module</td><td>Module</td><td>When the staff-facing product grows its own roadmap and team</td></tr>
+    <tr><td><strong>F&amp;B Order</strong></td><td><strong>Source of truth:</strong> menus, availability, carts, orders.</td><td>Sync + async</td><td>Balanced, spiky at meal times</td><td>Module</td><td>Service</td><td>When POS integrations (Micros, Toast) multiply &mdash; same argument as automation adapters</td></tr>
+    <tr><td><strong>PMS Bridge</strong></td><td>Per-property PMS credentials, guest-stay token mapping, folio posting.</td><td>Sync</td><td>External-latency-bound, flaky upstreams</td><td>Module</td><td>Service</td><td>Immediately if a PMS upstream shows &gt;1&nbsp;s p95 &mdash; it must not block the agent thread pool</td></tr>
+    <tr><td><strong>Knowledge / RAG</strong></td><td>Property content, embeddings, retrieval config.</td><td>Sync</td><td>Read-heavy; vector search CPU</td><td>Module</td><td>Module</td><td>When corpus &gt;10&nbsp;M chunks or per-property fine-tuning appears</td></tr>
+    <tr><td><strong>Guest Preference</strong></td><td>Consent records, opt-in preferences, erasure state.</td><td>Sync</td><td>Light</td><td>Module</td><td>Module</td><td>Never &mdash; but its data is the most sensitive; separate <em>schema</em> and key, not process</td></tr>
+    <tr><td><strong>Notification</strong></td><td>Delivery state, staff routing rules, escalation chains.</td><td>Async</td><td>Bursty</td><td>Module</td><td>Service</td><td>When escalation paging needs its own on-call reliability guarantees</td></tr>
+    <tr><td><strong>Automation Adapters</strong></td><td>Vendor connection state, command translation tables.</td><td>Sync + async</td><td>Per-property connections; blocking IO</td><td>Service ×N</td><td>Service ×N</td><td>&mdash; separate by design (bulkhead)</td></tr>
+    <tr><td><strong>Edge Gateway</strong></td><td>Local state cache, fallback rules, outbox queue.</td><td>Both</td><td>1&ndash;2 per property</td><td>Appliance</td><td>Appliance</td><td>&mdash; separate by design</td></tr>
+    <tr><td><strong>Audit / Trace</strong></td><td>Immutable turn records.</td><td>Async</td><td>Write-heavy append-only</td><td>Module + async sink</td><td>Service</td><td>When retention search becomes a product feature for hotels</td></tr>
+    <tr><td><strong>Tenant Admin API</strong></td><td>Onboarding workflows, enrolment, flags, kill switches.</td><td>Sync</td><td>Light</td><td>Module</td><td>Service</td><td>When the UI team wants independent release cadence &mdash; likely early</td></tr>
+    <tr><td><strong>Eval Harness</strong></td><td>Suites, baselines, results.</td><td>Batch</td><td>Batch/CI</td><td>Separate repo target</td><td>Same</td><td>&mdash; never in the serving path</td></tr>
+  </tbody>
+</table>
+
+<h2>12. Phased decomposition</h2>
+
+<pre class="ascii">
+PHASE 1 — DOCKER PILOT (1–3 properties, ~600 rooms)          "prove the agent works and the adapter abstraction holds"
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  docker compose up                                                                               │
+│                                                                                                  │
+│   device-gateway ──► woohoo-core ──► policy-service                                              │
+│                       │  ├ orchestrator   ├ property-catalog   ├ knowledge                       │
+│                       │  ├ router         ├ device-state       ├ guest-prefs                     │
+│                       │  ├ agent-runtime  ├ service-request    ├ notification                    │
+│                       │  ├ mcp-gateway    ├ fnb-order          ├ audit-sink                      │
+│                       │  └ asr/tts adapters                    └ pms-bridge                      │
+│                       └──► inncom-adapter ──► [edge-gateway @ property] ──► INNCOM head-end      │
+│                                                                                                  │
+│   postgres · redis · minio(S3) · nats(events) · otel-collector · jaeger · grafana                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+  Deployables: 5 images.  One team.  One CI pipeline.  Full trace fidelity from day one.
+
+PHASE 2 — AWS MULTI-TENANT (10–60 properties, 2k–12k rooms)   "make it a product with a price per room"
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  device-gateway (Fargate, NLB, sticky)                                                           │
+│  woohoo-core   (Fargate service, autoscaled)  ── carve out: agent-runtime, pms-bridge            │
+│  policy-service (Fargate)                                                                        │
+│  automation-adapter-{inncom,interel,bacnet} (Fargate, per-vendor task defs)                      │
+│  Aurora PostgreSQL Serverless v2 (RLS) · ElastiCache Redis · S3+ObjectLock · OpenSearch          │
+│  EventBridge + SQS · Secrets Manager · IoT Core (device certs) · CloudWatch+AMP+AMG              │
+│  Regional cells: eu-west-1 · ap-south-1 · me-central-1 · us-east-1                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+  Deployables: ~8.  Adds: per-tenant isolation, regional cells, canary properties, prompt release train.
+
+PHASE 3 — SCALE (200–500 properties, 40k–100k rooms)          "operate it"
+  Split by the documented triggers only. Expected additional carve-outs, in the order they will
+  actually be forced: agent-runtime → device-state → fnb-order → notification → tenant-admin.
+  Introduce: read replicas + per-cell caches, MSK if event volume justifies it, dedicated ASR pool
+  if self-hosting, per-tenant KMS keys, SOC 2 evidence automation.
+</pre>
+
+<div class="box good">
+  <div class="bt">Split triggers &mdash; the rule that keeps this honest</div>
+  <p>A module is promoted to a service when <strong>one of these is measurably true</strong>, and never because it feels
+  cleaner:</p>
+  <ul>
+    <li><strong>Scaling asymmetry:</strong> the module's resource curve diverges &gt;3&times; from its host (e.g. device-state
+    write volume forcing the whole core to scale out).</li>
+    <li><strong>Deploy contention:</strong> two teams block each other more than twice a week, or a release cadence
+    conflict emerges (prompt changes daily vs domain code weekly).</li>
+    <li><strong>Blast radius:</strong> the module can exhaust a shared resource &mdash; thread pool, connection pool,
+    memory &mdash; and take the host down. This is the PMS-bridge and automation-adapter case.</li>
+    <li><strong>Security boundary:</strong> the module starts handling untrusted third-party code or data (customer-supplied
+    MCP servers).</li>
+    <li><strong>Compliance boundary:</strong> the module's data must live in a different jurisdiction or under a different
+    key than its host.</li>
+  </ul>
+  <p>Write the trigger into the module's README when you create it. Review the list quarterly. This turns
+  &ldquo;should we split?&rdquo; from an architecture debate into a metric lookup.</p>
+</div>
+
+<h2>13. Synchronous vs event-driven boundaries</h2>
+
+<p>Getting this wrong is the most common way agentic systems become unreliable: teams make the guest-facing path
+asynchronous for elegance, and then cannot tell the guest whether their request worked.</p>
+
+<table>
+  <thead><tr><th style="width:30%">Flow</th><th style="width:13%">Mode</th><th style="width:57%">Reasoning</th></tr></thead>
+  <tbody>
+    <tr><td>Device &rarr; Gateway &rarr; Orchestrator &rarr; ASR &rarr; Router &rarr; Agent</td><td><strong>Synchronous / streaming</strong></td><td>The guest is standing there. Every millisecond is visible. No queues on this path, ever.</td></tr>
+    <tr><td>Agent &rarr; PDP &rarr; MCP Gateway &rarr; domain service</td><td><strong>Synchronous</strong></td><td>The agent needs the result to compose its reply. A queue here means the agent must speculate about outcomes, which is exactly the hallucination failure mode.</td></tr>
+    <tr><td>Automation command &rarr; adapter &rarr; edge &rarr; BMS</td><td><strong>Synchronous with a hard 2.5&nbsp;s budget, then async continuation</strong></td><td>Most BMS writes ack in 150&ndash;800&nbsp;ms. If it exceeds budget, the agent says &ldquo;I've asked for that &mdash; give it a moment&rdquo; and the confirmation arrives later as a screen update and, optionally, a follow-up utterance. Never block the voice turn on a slow head-end.</td></tr>
+    <tr><td>Ticket created &rarr; staff notification</td><td><strong>Async (event)</strong></td><td>The guest does not need to wait for a housekeeper's tablet to buzz. Durable delivery matters more than latency.</td></tr>
+    <tr><td>Device state telemetry ingest</td><td><strong>Async (event)</strong></td><td>High volume, no guest waiting, eventual consistency acceptable. Backpressure here must never reach the voice path.</td></tr>
+    <tr><td>Audit record write</td><td><strong>Async, but sealed synchronously</strong></td><td>The record is <em>constructed and sealed</em> in the turn; the durable write is queued. Critical nuance: policy verdicts are appended before execution (see &sect;7), so a crash cannot erase evidence of what was authorised.</td></tr>
+    <tr><td>Folio posting</td><td><strong>Async with saga semantics</strong></td><td>Money. Needs idempotency keys, retries, compensation, and reconciliation against the PMS. Must never be a fire-and-forget event.</td></tr>
+    <tr><td>Analytics / quality metrics</td><td><strong>Async, sampled</strong></td><td>Firehose to S3, batch aggregate. Never on the hot path.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The rule</div>
+  <p><strong>If the guest is waiting for the answer, it is synchronous. If the guest has already been told, it is
+  asynchronous.</strong> The dividing line is the moment the agent finishes speaking, and it is the responsibility of the
+  Session Orchestrator to know which side of that line every operation is on.</p>
+</div>

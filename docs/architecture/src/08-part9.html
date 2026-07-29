@@ -1,0 +1,242 @@
+<!-- ================= PART IX ================= -->
+<h1 class="part"><span class="pn">Part IX</span>Agentic Safety</h1>
+
+<h2>43. Threat model for a physical-world agent</h2>
+
+<p>Most LLM safety guidance assumes the worst outcome is a bad sentence. Here, the agent controls temperature in a room
+where someone is sleeping, creates work orders that send a stranger to a guest's door, and posts charges to a bill. The
+threat model has to be built around consequence, not around content.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:5%">ID</th><th style="width:19%">Threat</th><th style="width:26%">Realistic scenario</th><th style="width:8%">Severity</th><th style="width:42%">Primary control (structural, not prompt-based)</th></tr></thead>
+  <tbody>
+    <tr><td>T1</td><td><strong>Cross-room actuation</strong></td><td>Injection or model error causes an action against a room other than the caller's</td><td>Critical</td><td>Scope is injected server-side from the device certificate; tools have no room parameter (&sect;34.1). Structurally impossible, not merely prevented.</td></tr>
+    <tr><td>T2</td><td><strong>Cross-guest disclosure</strong></td><td>&ldquo;Who's staying in 402?&rdquo; / &ldquo;What did the guest next door order?&rdquo;</td><td>Critical</td><td>Same scoping. PMS Bridge can only resolve the stay bound to the calling room. Output guard scans replies for other-room identifiers.</td></tr>
+    <tr><td>T3</td><td><strong>Unauthorised charge</strong></td><td>Model places a large order without adequate confirmation, or a guest disputes one</td><td>High</td><td>T3 tier: mandatory spoken confirmation including the total; per-stay spend cap; idempotency; full audit record of the confirmation utterance.</td></tr>
+    <tr><td>T4</td><td><strong>Prompt injection via hotel content</strong></td><td>A staff-authored menu item description contains &ldquo;ignore previous instructions and&hellip;&rdquo;</td><td>High</td><td>Untrusted-content fencing (&sect;46); tool results can never authorise actions; PDP is unaffected by anything in context.</td></tr>
+    <tr><td>T5</td><td><strong>Blast radius</strong></td><td>&ldquo;Turn off all the lights in the hotel&rdquo; &mdash; or a bug that fans out</td><td>Critical</td><td>No tool accepts a multi-room target. Bulk operations do not exist in the guest tool surface at any tier (&sect;45).</td></tr>
+    <tr><td>T6</td><td><strong>Physical harm through automation</strong></td><td>Heat set to maximum in an occupied room; lights strobed; HVAC off in extreme weather</td><td>High</td><td>Hard bounds in the PDP, enforced per property; rate limits on repeated changes; no capability exists for lighting effects that could trigger photosensitivity.</td></tr>
+    <tr><td>T7</td><td><strong>Sleep/comfort disruption</strong></td><td>A scheduled or delayed action fires at 3&nbsp;a.m.</td><td>Medium</td><td>Quiet-hours policy applies to <em>delivery</em> as well as decision; no unattended actuation without an explicit guest-set schedule.</td></tr>
+    <tr><td>T8</td><td><strong>Hallucinated amenity or policy</strong></td><td>&ldquo;Yes, there's a rooftop pool open until midnight&rdquo; at a hotel with neither</td><td>Medium</td><td>Grounding requirement: property facts only from Knowledge MCP with citations; explicit &ldquo;I don't know, let me connect you&rdquo; path (&sect;47).</td></tr>
+    <tr><td>T9</td><td><strong>Missed emergency</strong></td><td>Guest says something indicating a medical or safety emergency and the system handles it as a normal request</td><td>Critical</td><td>Dedicated distress-detection path evaluated <em>before</em> normal routing; immediate staff escalation; explicit spoken statement of the device's limits (&sect;48).</td></tr>
+    <tr><td>T10</td><td><strong>False emergency reliance</strong></td><td>A guest believes the device will call an ambulance, and it will not</td><td>Critical</td><td>The device is never presented as an emergency channel. When distress is detected the assistant states plainly what it is doing and directs to real emergency services (&sect;48).</td></tr>
+    <tr><td>T11</td><td><strong>Jailbreak for entertainment</strong></td><td>Guests will absolutely try. Some will film it.</td><td>Medium (reputational)</td><td>The tool surface bounds the damage: the worst outcome of a successful jailbreak is embarrassing text, not an action. Output guard + refusal policy + monitoring of anomalous turns.</td></tr>
+    <tr><td>T12</td><td><strong>Surveillance misuse</strong></td><td>A staff member or an intruder tries to use the device to listen to a room</td><td>Critical</td><td>No remote-listen capability exists in the product. No API can activate the microphone. Mic activation is wake-word-local only, and the hard mute cuts it in hardware.</td></tr>
+    <tr><td>T13</td><td><strong>Runaway loop</strong></td><td>Agent retries a failing action repeatedly, spamming the BMS or creating duplicate tickets</td><td>Medium</td><td>Loop caps (&sect;27), circuit breakers, idempotency, per-turn and per-stay rate limits.</td></tr>
+    <tr><td>T14</td><td><strong>Data exfiltration via tool output</strong></td><td>Injection causes the agent to place sensitive data into a free-text field that leaves the system</td><td>Medium</td><td>Output guard on free-text fields; egress is limited to hotel-internal destinations; no tool performs arbitrary network calls.</td></tr>
+    <tr><td>T15</td><td><strong>Model or prompt regression</strong></td><td>A prompt tweak silently changes behaviour across 40,000 rooms</td><td>High</td><td>Prompts and models are versioned artefacts gated by the eval suite, rolled out progressively with automatic rollback (&sect;77).</td></tr>
+  </tbody>
+</table>
+
+<h2>44. The action risk tier model</h2>
+
+<p>Every tool carries a tier. The tier determines what the platform requires before the action reaches the world. This
+table is the heart of the safety design and should be reviewed line by line.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:6%">Tier</th><th style="width:15%">Character</th><th style="width:24%">Requirement before execution</th><th style="width:30%">Examples</th><th style="width:25%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-t0">T0</span></td><td>Read-only, no side effects</td><td>Scope check only. Auto-execute.</td><td><code>room.get_state</code>, <code>stay.get_info</code>, <code>fnb.get_menu</code>, <code>property.search_knowledge</code>, <code>service.get_status</code></td><td>Fast lane eligible. Pre-fetchable. Still fully audited.</td></tr>
+    <tr><td><span class="pill p-t1">T1</span></td><td>Reversible physical, low consequence</td><td>Scope + capability + bounds check. Auto-execute, confirm verbally after.</td><td><code>lighting.set</code>, <code>climate.set_temperature</code>, <code>curtains.set</code>, <code>dnd.set</code>, <code>tv.control</code>, <code>scene.apply</code>, <code>media.control</code>, <code>preferences.set</code></td><td>The bulk of traffic. Bounds (e.g. 18&ndash;26&nbsp;&deg;C) come from property policy, enforced in the PDP.</td></tr>
+    <tr><td><span class="pill p-t2">T2</span></td><td>Involves a human or an external commitment</td><td>Scope + duplicate + rate limit. Auto-execute, but the reply must state exactly what was committed.</td><td><code>service.create_request</code>, <code>service.cancel_request</code>, <code>stay.set_wakeup_call</code>, <code>stay.request_late_checkout</code> (no fee), <code>staff.connect</code></td><td>Someone will be dispatched. Duplicate suppression matters more than latency.</td></tr>
+    <tr><td><span class="pill p-t3">T3</span></td><td>Money, or hard to reverse</td><td><strong>Mandatory explicit spoken confirmation</strong> including the amount or the consequence, in the same session, within 90&nbsp;s, with a single-use token. Plus spend caps.</td><td><code>fnb.place_order</code>, chargeable late checkout, minibar posting, paid amenity booking, express checkout (Phase 3)</td><td>Confirmation is a <em>separate turn</em>. The pending action is stored server-side, not re-derived by the model &mdash; so injection cannot fabricate a confirmation.</td></tr>
+    <tr><td><span class="pill p-t4">T4</span></td><td>Safety-critical or staff-authority</td><td>Not executed by the agent at all. The agent may only <em>raise</em> them; a human acts.</td><td><code>staff.escalate_urgent</code>, medical/fire/security escalation, guest-conflict handling, anything affecting another guest</td><td>The agent's job is to gather context and hand off fast, not to resolve.</td></tr>
+    <tr><td><span class="pill p-t4">T5</span></td><td><strong>Prohibited</strong></td><td>No tool exists. Cannot be proposed.</td><td><strong>Door lock actuation</strong>, safe control, remote microphone activation, any cross-room action, any bulk/multi-room action, PAN handling, disclosure of another guest's data, staff-account changes, disabling life-safety systems</td><td>Absence is the control. See below.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">Decision D25 &mdash; No door lock control in V2</div>
+  <p>Guests will ask for it and sales will want it. Refuse it for V2, and be explicit about why: a voice interface has no
+  reliable speaker authentication, the room is accessible to anyone physically present, and the failure mode is a
+  stranger entering an occupied guest room. There is no confirmation flow that makes this acceptable, because the
+  attacker and the guest are indistinguishable to the device.</p>
+  <p>If it must eventually exist, it requires a second factor that is not voice &mdash; the guest's authenticated phone
+  app, or a PMS-verified key credential &mdash; and it should be that app, not the voice device, that performs the
+  action. Note also that the same reasoning is why <em>unlocking</em> is prohibited but a &ldquo;is my door
+  locked?&rdquo; read could be considered later at T0 with a per-property opt-in.</p>
+</div>
+
+<h3>44.1 The confirmation protocol for T3</h3>
+<pre class="ascii">
+ TURN N                                                  TURN N+1
+ ─────────────────────────────────────────────────────   ────────────────────────────────────────────────
+ Guest:  "Order a club sandwich and a beer"               Guest: "Yes"
+ Agent proposes fnb.place_order{...}                      Router: pending_confirmation exists in session
+ PDP:    tier T3 → CONFIRM_REQUIRED                       → confirmation lane (no LLM needed for yes/no)
+ Platform stores server-side:                             → validates token, not expired, single-use
+   pending_action {                                       → executes the STORED action verbatim
+     token: "pc_01J...",  ttl: 90s,  single_use: true       (NOT re-derived from the new utterance —
+     tool: "fnb.place_order",                                this is what makes injection ineffective)
+     args: {...canonical, frozen...},                     → marks token consumed
+     total: "₹1,240 incl. taxes"                          Agent: "Ordered — about 30 minutes.
+   }                                                              ₹1,240 has gone to your room bill."
+ Agent says: "That's a club sandwich and a Kingfisher,
+   ₹1,240 including taxes, charged to your room.          If "no" / timeout / ambiguity → token discarded,
+   Shall I place it?"                                     nothing executed, no charge, audit records it.
+</pre>
+<p>The critical property: <strong>the action executed on confirmation is the action that was authorised, byte for
+byte.</strong> The model does not get to reinterpret it. A guest saying &ldquo;yes&rdquo; can only ever confirm the
+frozen pending action or nothing.</p>
+
+<h2>45. Blast radius containment</h2>
+
+<table>
+  <thead><tr><th style="width:26%">Containment</th><th style="width:74%">Mechanism</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Room</strong></td><td>Tools have no room parameter. Scope comes from the device certificate. There is no code path by which a guest turn affects another room.</td></tr>
+    <tr><td><strong>Property</strong></td><td>Adapter credentials are property-scoped. A compromised adapter connection reaches one hotel.</td></tr>
+    <tr><td><strong>Tenant</strong></td><td>Row-level security in Postgres keyed on tenant, plus tenant claim validation at every service boundary. Per-tenant KMS keys for sensitive data.</td></tr>
+    <tr><td><strong>Rate</strong></td><td>Per device: 30 turns/hour, 6 actuations/minute. Per stay: 10 open service requests, spend cap. Per property: anomaly detection on aggregate action volume with an automatic circuit break.</td></tr>
+    <tr><td><strong>Fleet</strong></td><td><strong>There is no fleet-wide command path in the guest flow at all.</strong> Bulk operations exist only in the staff/admin plane, behind human authentication, with a separate approval step and a hard cap on rooms per operation.</td></tr>
+    <tr><td><strong>Temporal</strong></td><td>Global and per-property kill switches propagate in under 10&nbsp;s via config pub/sub (&sect;50).</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D12 &mdash; The bulk-operation prohibition</div>
+  <p>&ldquo;Turn off all the lights in the hotel&rdquo; is not defended against by a policy rule that rejects it. It is
+  defended against by there being <strong>no tool that can express it</strong>. Every guest-plane tool operates on
+  exactly one room, and that room is not a parameter. This is worth more than any amount of prompt engineering, and it
+  is the design property to protect hardest during future feature requests &mdash; because someone will eventually ask
+  for &ldquo;turn on all the lights on floor 3 for the fire drill&rdquo;, and the answer is that it belongs in the staff
+  plane with human authentication, not in the guest tool surface.</p>
+</div>
+
+<h2>46. Prompt injection defence</h2>
+
+<p>The agent reads text it did not author: guest speech, staff-written menus and FAQs, ticket histories, and results
+from vendor systems. Any of it can carry instructions. The defence is layered, and no single layer is trusted.</p>
+
+<pre class="ascii">
+ LAYER 1 · STRUCTURAL SEPARATION
+   Untrusted content never concatenated into instruction layers. It appears only inside explicit
+   fenced blocks with a standing rule that content inside is data, never instruction. Layer 0 of the
+   prompt (§26) states this once, stably, so it is part of the cached, immutable system identity.
+
+ LAYER 2 · THE PDP DOES NOT READ THE PROMPT
+   ★ The most important layer. Policy decisions are made from the TurnContext and the proposed tool
+   call — structured data — and never from the model's reasoning, its explanation, or anything in the
+   conversation. An injection can change what the model PROPOSES. It cannot change what is PERMITTED.
+   Whatever the attacker convinces the model of, the action still has to pass a component that never
+   read their text.
+
+ LAYER 3 · CONTENT SANITISATION
+   Tool results scanned before entering context: instruction-like patterns flagged, control characters
+   and prompt delimiters stripped, length capped. Staff-authored content (menus, FAQ) is additionally
+   scanned at AUTHORING time in the admin UI — catching it once at write beats catching it every read.
+
+ LAYER 4 · CAPABILITY MINIMISATION
+   The model can only propose tools present in this room's surface. There is no shell, no HTTP fetch,
+   no file access, no code execution, no ability to call an arbitrary endpoint. The "lethal trifecta"
+   — private data + untrusted content + external communication — is broken at the third leg: there is
+   no egress channel the agent controls.
+
+ LAYER 5 · OUTPUT GUARD
+   Replies scanned before TTS for: other-room identifiers, other guests' names, credentials, internal
+   IDs, system-prompt fragments, and length. Violations are replaced with a safe response and logged
+   as a security event, not silently dropped.
+
+ LAYER 6 · DETECTION
+   policy.denied and guard-violation events feed anomaly detection. A device generating repeated
+   denials is flagged; a property showing a spike is escalated. Injection attempts become a signal
+   rather than an invisible near-miss.
+</pre>
+
+<div class="box good">
+  <div class="bt">The honest position on prompt injection</div>
+  <p>Prompt injection is <strong>not solved</strong>, and any architecture that claims to prevent it at the model layer
+  is overselling. This design therefore assumes injection will sometimes succeed at the model layer and asks a different
+  question: <em>what is the worst thing a fully compromised model can cause?</em></p>
+  <p>With the controls above, the answer is: it can say something embarrassing, and it can perform a T0&ndash;T2 action
+  in the caller's own room &mdash; adjust that room's lights or temperature, or raise a service request that a human will
+  see. It cannot reach another room, cannot spend money without a separate confirmed turn, cannot exfiltrate data
+  because it has no egress, and cannot touch anything at T4/T5. That is a bounded, survivable worst case, and bounding
+  it is the actual goal.</p>
+</div>
+
+<h2>47. Grounding and hallucination control</h2>
+
+<ul>
+  <li><strong>Property facts come only from tools.</strong> The prompt explicitly forbids answering questions about
+  amenities, hours, prices or policies from the model's own knowledge. If <code>property.search_knowledge</code> returns
+  nothing, the answer is &ldquo;I don't have that &mdash; let me connect you to the front desk&rdquo;, and
+  <code>staff.connect</code> makes that a real action rather than a brush-off.</li>
+  <li><strong>Retrieval returns citations</strong>, and the turn record stores which knowledge chunks were used. When a
+  guest complains they were told the wrong thing, you can show exactly what the system read.</li>
+  <li><strong>Never invent a capability.</strong> Because the tool surface is generated from the manifest, the model
+  cannot propose a curtain action in a room without curtains. For questions rather than actions, the property profile in
+  Layer 1 lists what the property does <em>not</em> have &mdash; explicit negative facts prevent a helpful model from
+  assuming a business hotel has a spa.</li>
+  <li><strong>Never invent an outcome.</strong> Confirmations are generated from tool results, not from the model's
+  expectation (&sect;37).</li>
+  <li><strong>Uncertainty is a supported answer.</strong> &ldquo;I'm not sure &mdash; shall I ask the front desk?&rdquo;
+  is measured as a success in the eval suite when it is the correct response. If your metrics only reward answering, you
+  will train the system to guess.</li>
+</ul>
+
+<h2>48. Duty of care and emergency escalation</h2>
+
+<p>A device in a bedroom will eventually hear someone in genuine trouble. The system's obligations here are real, and
+the design has to be decided deliberately rather than emerging from a fallback branch.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Situation</th><th style="width:41%">System behaviour</th><th style="width:39%">Design rationale</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Medical emergency</strong> (&ldquo;I'm having chest pain&rdquo;, &ldquo;help, I can't breathe&rdquo;)</td><td>Detected <em>before</em> normal routing. Immediately: (1) say plainly &mdash; <em>&ldquo;I'm alerting the hotel team now. If this is an emergency, please call [local emergency number] &mdash; I can't call them for you.&rdquo;</em>; (2) raise T4 escalation to the front desk and duty manager with room, time and the trigger; (3) display the local emergency number on screen; (4) stay in an open listening state and keep the escalation open until a human acknowledges.</td><td>The device must never imply it has summoned help it cannot summon. Telling the guest the truth about its limits <em>and</em> escalating in parallel is the only defensible behaviour. The screen matters: it works when speech does not.</td></tr>
+    <tr><td><strong>Fire / smoke / alarm</strong></td><td>Do not attempt automation. State the evacuation instruction, show it on screen, escalate. Never claim to have contacted the fire service.</td><td>Life-safety systems are regulated and independent. Woohoo must not interfere with or appear to substitute for them.</td></tr>
+    <tr><td><strong>Security / intruder / feeling unsafe</strong></td><td>Silent-capable escalation to security and duty manager. Offer to connect to the front desk. Do not announce loudly if the guest's phrasing suggests they may not be alone.</td><td>A loud confirmation can escalate a dangerous situation. Design the acknowledgement to be quiet and on-screen by default in this path.</td></tr>
+    <tr><td><strong>Expressions of distress or self-harm</strong></td><td>Respond with warmth, without attempting counselling or clinical judgement. Provide the locally appropriate crisis helpline number on screen and aloud. Escalate to the duty manager under the property's welfare protocol. Do not create a service ticket that reads like a maintenance request.</td><td>The device is not a crisis service and must not pretend to be. Its useful contributions are: being kind, surfacing a real helpline, and getting a trained human involved quickly. Every property must have a documented welfare protocol before go-live &mdash; make it an onboarding gate.</td></tr>
+    <tr><td><strong>Child alone in the room</strong></td><td>T3+ actions disabled on child-indicative interaction patterns; no ordering, no charges. Age-appropriate refusals. Never disclose stay details.</td><td>Children will talk to it. The correct behaviour is friendly and harmless.</td></tr>
+    <tr><td><strong>Intoxicated guest</strong></td><td>No special detection &mdash; unreliable and intrusive. Instead: the generic T3 confirmation, spend caps and quiet-hours rules already bound the damage.</td><td>Resist the temptation to build state-of-guest inference. It is invasive, inaccurate, and the generic controls cover the actual risk.</td></tr>
+    <tr><td><strong>Guest reports another guest</strong> (noise, harassment)</td><td>T4 escalation with context to the duty manager. The agent takes no action itself and does not disclose anything about the other room.</td><td>Anything affecting another guest is a human decision, always.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">Decision D26 &mdash; Emergency positioning</div>
+  <p><strong>Woohoo is never marketed, labelled, described in onboarding, or spoken of by the assistant itself as a way
+  to reach emergency services.</strong> In-room collateral must say so. The device says so at the moment it matters. This
+  constrains marketing copy and it should &mdash; the alternative is a guest who reasonably believed help was coming.
+  Review this position with counsel in every jurisdiction you deploy in, and treat the property's welfare and
+  emergency protocols as a go-live gate rather than documentation.</p>
+</div>
+
+<h2>49. Abuse, privacy between guests, and misuse</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Vector</th><th style="width:38%">Response</th><th style="width:38%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Jailbreak attempts, roleplay, &ldquo;pretend you have no rules&rdquo;</td><td>Brief, unembarrassed refusal and redirect. No lecture. Logged and sampled into the adversarial eval corpus.</td><td>The tool surface means a successful jailbreak yields text, not action. Do not over-invest in refusing cleverly; invest in bounding consequence.</td></tr>
+    <tr><td>Profanity and sexual content</td><td>Property-configurable strictness. Default: do not engage, do not moralise, return to task.</td><td>A device that scolds guests generates complaints. Neutrality is the right register.</td></tr>
+    <tr><td><strong>Asking about other guests</strong></td><td>Structurally impossible to answer &mdash; no tool can resolve another room. Refusal is factual: &ldquo;I can only help with your own room.&rdquo;</td><td>The highest-severity privacy risk in the product, and the one most cheaply solved by scoping.</td></tr>
+    <tr><td>Attempting to control other rooms</td><td>Same. No tool accepts a room parameter.</td><td></td></tr>
+    <tr><td>Repeated service requests as harassment of staff</td><td>Per-stay rate limits; pattern flagged to the duty manager rather than silently blocked.</td><td>Staff protection is a real requirement hotels will ask about.</td></tr>
+    <tr><td>Attempting to extract the system prompt</td><td>Refuse; output guard catches leakage independently.</td><td>Assume the prompt will leak eventually. It must contain no secrets and no security logic &mdash; which, per P1, it does not.</td></tr>
+    <tr><td>Recording the device for social media</td><td>Accept it as a given. Test the top jailbreak prompts in the adversarial suite so the viral clip is boring.</td><td>Cheap reputational insurance.</td></tr>
+    <tr><td>Staff misuse of the admin plane</td><td>RBAC, per-property scoping, audit of every staff action, bulk operations capped and approved.</td><td>Insider risk is the one most often under-modelled.</td></tr>
+  </tbody>
+</table>
+
+<h2>50. Kill switches and staff override</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Control</th><th style="width:18%">Granularity</th><th style="width:14%">Propagation</th><th style="width:46%">Effect</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Global kill</strong></td><td>Platform</td><td>&lt;10&nbsp;s</td><td>All devices to Level 2 degraded (fast lane only) or fully silent with an on-screen notice. For a live safety incident.</td></tr>
+    <tr><td><strong>Tenant / property kill</strong></td><td>Chain or hotel</td><td>&lt;10&nbsp;s</td><td>That property's devices degrade. Used when a property's BMS is misbehaving or during a chain's request.</td></tr>
+    <tr><td><strong>Capability kill</strong></td><td>One tool, any scope</td><td>&lt;10&nbsp;s</td><td>Disable e.g. <code>fnb.place_order</code> platform-wide after a billing incident, without taking the product down.</td></tr>
+    <tr><td><strong>Tier ceiling</strong></td><td>Any scope</td><td>&lt;10&nbsp;s</td><td>Cap the maximum tier the agent may execute. &ldquo;Read-only mode&rdquo; is <code>ceiling = T0</code> &mdash; a genuinely useful incident posture.</td></tr>
+    <tr><td><strong>Prompt / model pin</strong></td><td>Any scope</td><td>Next turn</td><td>Force a known-good prompt or model version. The rollback lever for &sect;77.</td></tr>
+    <tr><td><strong>Device quarantine</strong></td><td>One device</td><td>Immediate</td><td>Revoke certificate, drop connection. For a stolen or compromised unit.</td></tr>
+    <tr><td><strong>Staff override</strong></td><td>Room</td><td>Immediate</td><td>Staff can cancel any pending action, reverse an automation change, void a request or order, and mute a device from the staff plane.</td></tr>
+    <tr><td><strong>Guest mute</strong></td><td>Room</td><td>Immediate</td><td>Hardware mic mute. Cuts the microphone at the driver, drives the LED. Not a software flag.</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">Test the kill switches on a schedule</div>
+  <p>An untested kill switch is a comment in a config file. Exercise each one against the staging fleet quarterly and
+  record the propagation time. During your first serious incident you will not have time to discover that the capability
+  kill only takes effect on the next container restart.</p>
+</div>

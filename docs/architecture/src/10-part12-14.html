@@ -1,0 +1,284 @@
+<!-- ================= PART XII ================= -->
+<h1 class="part"><span class="pn">Part XII</span>Scale &amp; Unit Economics</h1>
+
+<h2>63. Demand model</h2>
+
+<p>Every capacity and cost number below derives from these assumptions. They are the numbers to challenge first, because
+everything else is arithmetic.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Assumption</th><th style="width:16%">Value</th><th style="width:54%">Basis and sensitivity</th></tr></thead>
+  <tbody>
+    <tr><td>Scale point A</td><td>50 properties &times; 200 rooms = <strong>10,000 devices</strong></td><td>A realistic 18-month target</td></tr>
+    <tr><td>Scale point B</td><td>500 properties &times; 200 rooms = <strong>100,000 devices</strong></td><td>A realistic 3&ndash;4 year target</td></tr>
+    <tr><td>Occupancy</td><td>70%</td><td>Industry-typical. Only occupied rooms generate turns.</td></tr>
+    <tr><td><strong>Turns per occupied room per day</strong></td><td><strong>6</strong></td><td><strong>The most uncertain and most important number here.</strong> In-room assistants have low, bursty utilisation &mdash; a guest interacts on arrival, before bed, and on waking. Observed deployments cluster in the 2&ndash;10 range. At 3 the cost model halves; at 12 it doubles. Instrument this from the first pilot property and revise.</td></tr>
+    <tr><td>Peak:average ratio</td><td>8:1</td><td>Strong diurnal pattern: arrival (16:00&ndash;20:00), bedtime (22:00&ndash;00:00), morning (07:00&ndash;09:00). Peak hour carries roughly 15% of daily volume.</td></tr>
+    <tr><td>Average utterance</td><td>3.5&nbsp;s speech, ~6&nbsp;s of streamed audio</td><td>Includes pre-roll and trailing silence before endpoint</td></tr>
+    <tr><td>Fast lane share</td><td>60%</td><td>Target. Below 45% the agentic lane dominates cost; above 70% suspect the fast lane is over-matching &mdash; check the shadow-eval disagreement rate.</td></tr>
+    <tr><td>Average agentic turn</td><td>~5,000 input tokens (largely cached), ~300 output</td><td>Layer 0&ndash;2 cached; Layer 3&ndash;5 fresh</td></tr>
+    <tr><td>Average spoken response</td><td>~120 characters, 40% served from the phrase cache</td><td>Voice replies must be short; if this number grows, the UX is drifting</td></tr>
+  </tbody>
+</table>
+
+<h2>64. Capacity model</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:36%">Metric</th><th style="width:20%">10,000 devices</th><th style="width:20%">100,000 devices</th><th style="width:24%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Occupied rooms</td><td class="num">7,000</td><td class="num">70,000</td><td></td></tr>
+    <tr><td>Turns / day</td><td class="num">42,000</td><td class="num">420,000</td><td></td></tr>
+    <tr><td>Turns / month</td><td class="num">1.26 M</td><td class="num">12.6 M</td><td></td></tr>
+    <tr><td>Average turns / second</td><td class="num">0.49</td><td class="num">4.9</td><td>Strikingly low &mdash; this is not a high-QPS system</td></tr>
+    <tr><td>Peak turns / second</td><td class="num">~3.9</td><td class="num">~39</td><td>8:1 peak ratio</td></tr>
+    <tr><td>Peak concurrent turns</td><td class="num">~16</td><td class="num">~160</td><td>At ~4&nbsp;s per turn</td></tr>
+    <tr><td><strong>Concurrent WebSocket connections</strong></td><td class="num"><strong>10,000</strong></td><td class="num"><strong>100,000</strong></td><td><strong>The real scaling constraint.</strong> Connections, not requests.</td></tr>
+    <tr><td>Device Gateway instances (@5k conns)</td><td class="num">2 + 2 HA</td><td class="num">20 + 4 HA</td><td>Memory and file-descriptor bound</td></tr>
+    <tr><td>ASR minutes / month</td><td class="num">126,000</td><td class="num">1.26 M</td><td>6&nbsp;s per turn</td></tr>
+    <tr><td>LLM input tokens / month</td><td class="num">~2.5 B</td><td class="num">~25 B</td><td>Before cache discount; caching cuts billed input substantially</td></tr>
+    <tr><td>LLM output tokens / month</td><td class="num">~151 M</td><td class="num">~1.5 B</td><td>40% of turns &times; 300 tokens</td></tr>
+    <tr><td>TTS characters / month</td><td class="num">~91 M</td><td class="num">~907 M</td><td>After the 40% phrase-cache saving</td></tr>
+    <tr><td>Audio bandwidth / month</td><td class="num">~15 GB</td><td class="num">~151 GB</td><td>Trivial. Audio bandwidth is not a cost concern.</td></tr>
+    <tr><td>Audit records / month</td><td class="num">1.26 M</td><td class="num">12.6 M</td><td>~4&nbsp;KB each &rarr; 5&nbsp;GB / 50&nbsp;GB per month</td></tr>
+    <tr><td>Edge gateways</td><td class="num">50&ndash;70</td><td class="num">500&ndash;700</td><td>HA pairs on properties over ~250 rooms</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">The shape of this workload is unusual &mdash; design for it</div>
+  <p>Peak throughput at 100,000 devices is <strong>39 turns per second</strong>. That is a load a single well-built
+  service handles comfortably. Meanwhile the system must hold <strong>100,000 simultaneous connections</strong> and
+  maintain sub-second latency on every one.</p>
+  <p>So this is a <em>connection-scale, low-throughput, latency-critical</em> system. That has direct consequences:
+  don't over-engineer the request path, do engineer the connection layer carefully, and be sceptical of any component
+  choice justified by throughput &mdash; you do not have a throughput problem. It also explains D19: Lambda's cold
+  starts and connection model are wrong here, while Fargate's steady-state long-lived tasks are exactly right.</p>
+</div>
+
+<h2>65. Cost model</h2>
+
+<p class="small">All figures indicative&dagger; and pre-negotiation. Volume commitments typically reduce AI and cloud
+line items by 20&ndash;40% at scale point B.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Line item</th><th style="width:19%">Basis</th><th style="width:14%">10k devices</th><th style="width:14%">100k devices</th><th style="width:29%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td colspan="5" style="background:var(--line2);font-weight:700;font-size:7.6pt;">AI SERVICES</td></tr>
+    <tr><td>ASR (streaming)</td><td>126k / 1.26M min @ ~$0.008</td><td class="num">$1,010</td><td class="num">$10,080</td><td>Largest single AI line item at both scales</td></tr>
+    <tr><td>LLM &mdash; Gemini Flash</td><td>40% of turns, cached input</td><td class="num">$680</td><td class="num">$6,800</td><td>Context caching is doing heavy lifting here</td></tr>
+    <tr><td>LLM &mdash; Flash-Lite (classification)</td><td>Slot filling, clarify lane</td><td class="num">$60</td><td class="num">$600</td><td></td></tr>
+    <tr><td>TTS</td><td>91M / 907M chars @ ~$16/M</td><td class="num">$1,460</td><td class="num">$14,510</td><td>Phrase cache already saves ~40%; a bigger cache saves more</td></tr>
+    <tr><td>Embeddings</td><td>RAG + fast-lane similarity</td><td class="num">$40</td><td class="num">$400</td><td></td></tr>
+    <tr style="font-weight:650"><td>AI subtotal</td><td></td><td class="num">$3,250</td><td class="num">$32,390</td><td></td></tr>
+    <tr><td colspan="5" style="background:var(--line2);font-weight:700;font-size:7.6pt;">COMPUTE &amp; PLATFORM</td></tr>
+    <tr><td>Device Gateway (Fargate)</td><td>4 / 24 tasks</td><td class="num">$140</td><td class="num">$840</td><td>Scales with connections</td></tr>
+    <tr><td>woohoo-core (Fargate)</td><td>4 / 16 tasks</td><td class="num">$280</td><td class="num">$1,400</td><td>Sized for HA and headroom, not throughput</td></tr>
+    <tr><td>Policy service</td><td>2 / 6 tasks</td><td class="num">$70</td><td class="num">$260</td><td></td></tr>
+    <tr><td>Automation adapters</td><td>3 vendors &times; N</td><td class="num">$210</td><td class="num">$1,200</td><td>Per-property connection bound</td></tr>
+    <tr><td>Aurora PostgreSQL Serverless v2</td><td>~2 / ~10 ACU avg</td><td class="num">$220</td><td class="num">$1,100</td><td>Plus storage and backups</td></tr>
+    <tr><td>ElastiCache Redis</td><td>HA pair / cluster</td><td class="num">$110</td><td class="num">$520</td><td></td></tr>
+    <tr><td>OpenSearch (audit index)</td><td>3 / 6 nodes</td><td class="num">$260</td><td class="num">$1,560</td><td>Grows with retention window &mdash; a real lever</td></tr>
+    <tr><td>S3 + Object Lock</td><td>5 / 50 GB per month, 13&nbsp;mo</td><td class="num">$40</td><td class="num">$390</td><td>Cheap. Do not economise on audit.</td></tr>
+    <tr><td>NLB + ALB + NAT + egress</td><td></td><td class="num">$180</td><td class="num">$820</td><td>NAT gateway data processing is the sneaky one &mdash; use VPC endpoints</td></tr>
+    <tr><td>Observability (AMP/AMG/CloudWatch)</td><td></td><td class="num">$260</td><td class="num">$1,600</td><td>Log volume control matters; sample aggressively (&sect;70.2)</td></tr>
+    <tr><td>Secrets, KMS, IoT Core, ECR, misc</td><td></td><td class="num">$140</td><td class="num">$700</td><td></td></tr>
+    <tr><td><strong>Regional cell overhead</strong></td><td>1 / 5 cells</td><td class="num">&mdash;</td><td class="num">$6,000</td><td>Each additional cell carries a fixed baseline regardless of load &mdash; the main diseconomy of scale in this design</td></tr>
+    <tr style="font-weight:650"><td>Platform subtotal</td><td></td><td class="num">$1,910</td><td class="num">$16,390</td><td></td></tr>
+    <tr class="total"><td><strong>TOTAL CLOUD COGS / MONTH</strong></td><td></td><td class="num"><strong>$5,160</strong></td><td class="num"><strong>$48,780</strong></td><td></td></tr>
+    <tr class="total"><td><strong>COST PER ROOM PER MONTH</strong></td><td></td><td class="num"><strong>$0.52</strong></td><td class="num"><strong>$0.49</strong></td><td>Excludes device and edge hardware (capex) and staff</td></tr>
+    <tr><td>Edge gateway hardware (amortised)</td><td>~$500 over 3&nbsp;yr, 60 / 600 units</td><td class="num">$830</td><td class="num">$8,300</td><td>Capex &mdash; usually billed to the property or in the install fee</td></tr>
+    <tr class="total"><td><strong>Fully loaded per room per month</strong></td><td></td><td class="num"><strong>$0.60</strong></td><td class="num"><strong>$0.57</strong></td><td></td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">What this means commercially</div>
+  <p>At roughly <strong>$0.50&ndash;0.60 per room per month in cloud COGS</strong>, the technology cost is not the
+  constraint on this business &mdash; hardware, installation and sales are. That is a comfortable position, and it argues
+  for spending the engineering effort on <em>reliability and onboarding speed</em> rather than on shaving inference
+  costs.</p>
+  <p><strong>Two caveats.</strong> First, this assumes 6 turns per occupied room per day; if guests engage far more
+  heavily than expected the AI lines scale linearly, so instrument turn volume from day one and build the cost alarm
+  before you need it. Second, cost per room is only comfortable because the fast lane keeps 60% of turns away from the
+  LLM. If that ratio degrades, AI cost roughly doubles &mdash; which makes the shadow-eval discipline in &sect;24.3 a
+  financial control as well as a quality one.</p>
+</div>
+
+<h2>66. The optimisation ladder</h2>
+<table class="tight">
+  <thead><tr><th style="width:6%">#</th><th style="width:28%">Optimisation</th><th style="width:16%">Saving</th><th style="width:50%">Cost / risk</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><strong>Expand the phrase cache</strong> from 40% to 60% of TTS characters</td><td>~20% of TTS</td><td>Low effort, no quality risk. Do this first.</td></tr>
+    <tr><td>2</td><td><strong>Raise fast-lane coverage</strong> 60% &rarr; 70% using shadow-eval evidence</td><td>~25% of LLM</td><td>Low risk <em>if</em> gated by the disagreement metric. Dangerous if hand-tuned.</td></tr>
+    <tr><td>3</td><td><strong>Aggressive context caching</strong> &mdash; make Layers 0&ndash;2 byte-stable</td><td>~40% of LLM input</td><td>Pure engineering discipline. Also improves latency.</td></tr>
+    <tr><td>4</td><td><strong>Skip the second LLM pass</strong> via templated confirmations</td><td>~20% of LLM output</td><td>Low risk. Also removes ~300&nbsp;ms from the common turn.</td></tr>
+    <tr><td>5</td><td><strong>Trim streamed audio</strong> &mdash; tighter endpointing, DTX, no pre-roll on re-prompts</td><td>~20% of ASR</td><td>Needs care: over-tight endpointing truncates slow speakers and hurts accessibility.</td></tr>
+    <tr><td>6</td><td><strong>Negotiate volume commitments</strong> with ASR, TTS and Vertex</td><td>20&ndash;40% of AI</td><td>Only sales effort. Highest absolute saving at scale point B.</td></tr>
+    <tr><td>7</td><td>Cheaper ASR vendor for English-dominant properties</td><td>~50% of ASR there</td><td>Requires per-property routing &mdash; which the adapter already supports.</td></tr>
+    <tr><td>8</td><td>Reduce audit retention 30&nbsp;d &rarr; 14&nbsp;d for transcripts</td><td>~40% of OpenSearch</td><td>Weigh against debugging and dispute-resolution needs. Keep tool/verdict records at 13&nbsp;months regardless.</td></tr>
+    <tr><td>9</td><td>Self-host ASR on GPU or on the edge appliance</td><td>Most of ASR</td><td>High operational cost. Only past ~$15k/month ASR spend, and it doubles as the residency answer (&sect;15.4).</td></tr>
+    <tr><td>10</td><td>Consolidate regional cells</td><td>Cell overhead</td><td><strong>Do not.</strong> Residency is a sales asset, not a cost line. Listed for completeness only.</td></tr>
+  </tbody>
+</table>
+
+<!-- ================= PART XIII ================= -->
+<h1 class="part"><span class="pn">Part XIII</span>Reliability</h1>
+
+<h2>67. SLIs and SLOs</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">SLI</th><th style="width:15%">SLO</th><th style="width:16%">Measured</th><th style="width:43%">Why this target</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Wake &rarr; first audio response</strong> (p50)</td><td>&le; 1,100&nbsp;ms</td><td>Device-side, reported</td><td>The number that determines whether the device feels alive. Measured on the device because that is where the guest is.</td></tr>
+    <tr><td>Wake &rarr; first audio (p95)</td><td>&le; 2,400&nbsp;ms</td><td>Device-side</td><td>Includes the agentic lane with one tool round-trip</td></tr>
+    <tr><td><strong>Turn success rate</strong></td><td>&ge; 98.5%</td><td>Turn records</td><td>&ldquo;Success&rdquo; = the turn completed with a spoken response, whatever the response was. Excludes quality.</td></tr>
+    <tr><td><strong>Task success rate</strong></td><td>&ge; 95% on top-50 intents</td><td>Eval + sampled human review</td><td>The quality metric. Distinct from turn success &mdash; a turn can complete and still do the wrong thing.</td></tr>
+    <tr><td>Voice path availability</td><td>&ge; 99.5% (Phase 2), 99.9% (Phase 3)</td><td>Synthetic probes per cell</td><td>Do not sign 99.9% before multi-AZ everything and a tested failover.</td></tr>
+    <tr><td>Device connectivity</td><td>&ge; 99% of devices online</td><td>Gateway registry</td><td>Below this, investigate the property's network before the platform</td></tr>
+    <tr><td>Automation command success</td><td>&ge; 99% within 2.5&nbsp;s</td><td>Adapter metrics</td><td>Per property &mdash; a bad property must not hide in the aggregate. This is the metric that finds failing BMS installs.</td></tr>
+    <tr><td>ASR final latency (p95)</td><td>&le; 300&nbsp;ms after endpoint</td><td>Adapter</td><td>Vendor SLA tracking</td></tr>
+    <tr><td>PDP decision latency (p99)</td><td>&le; 8&nbsp;ms</td><td>Service metrics</td><td>It is on every action; it must be invisible</td></tr>
+    <tr><td>Containment rate</td><td>&ge; 80%</td><td>Turn records</td><td>Resolved without staff involvement. Excludes deliberate escalations.</td></tr>
+    <tr><td>Escalation acknowledgement</td><td>&ge; 95% within 5&nbsp;min</td><td>Notification service</td><td>A T4 escalation nobody acknowledges is the worst failure in the system &mdash; alarm on it directly.</td></tr>
+    <tr><td>Unsafe action rate</td><td><strong>0</strong></td><td>PDP audit</td><td>Any T3+ executed without its required confirmation is a Sev-1, no matter the outcome.</td></tr>
+  </tbody>
+</table>
+
+<h2>68. The degradation ladder</h2>
+<p>Defined in &sect;29 as an agent behaviour; here it is the operational contract. Each level has a trigger, an owner and
+an alarm.</p>
+<table class="tight">
+  <thead><tr><th style="width:9%">Level</th><th style="width:24%">Trigger</th><th style="width:24%">Automatic action</th><th style="width:22%">Guest experience</th><th style="width:21%">Alarm</th></tr></thead>
+  <tbody>
+    <tr><td>0 Normal</td><td>&mdash;</td><td>&mdash;</td><td>Full</td><td>&mdash;</td></tr>
+    <tr><td>1 LLM slow</td><td>LLM p95 &gt; 2.5&nbsp;s / 60&nbsp;s</td><td>Zero thinking budget, widen fast lane, always fill pause</td><td>Unchanged</td><td>Warning</td></tr>
+    <tr><td>2 LLM degraded</td><td>LLM errors &gt; 10% or p95 &gt; 4&nbsp;s</td><td>Fast lane only; staff path stays open</td><td>Reduced scope, clearly stated</td><td>Page</td></tr>
+    <tr><td>3 ASR down</td><td>Both vendors failing</td><td>Screen UI takes over</td><td>Touch instead of voice</td><td>Page</td></tr>
+    <tr><td>4 WAN down</td><td>Device cannot reach cloud</td><td>On-device grammar &rarr; edge &rarr; BMS; requests queued</td><td>Core automation works; guest told what is queued</td><td>Property alarm</td></tr>
+    <tr><td>5 Edge down</td><td>Edge unreachable too</td><td>Honest failure message, point to room phone</td><td>Device is informative but inert</td><td>Page + property notify</td></tr>
+  </tbody>
+</table>
+
+<h2>69. Failure modes and responses</h2>
+<table class="tight">
+  <thead><tr><th style="width:20%">Failure</th><th style="width:11%">Likelihood</th><th style="width:11%">Impact</th><th style="width:58%">Design response</th></tr></thead>
+  <tbody>
+    <tr><td><strong>One property's BMS hangs</strong></td><td>High &mdash; expect it monthly</td><td>One property</td><td>Per-(property,vendor) circuit breaker with bulkheaded thread pools. The most important resilience control in the system, because the failure is routine and the naive design propagates it to every hotel.</td></tr>
+    <tr><td>Hotel WAN outage</td><td>High</td><td>One property</td><td>Edge autonomy + on-device grammar + outbox replay</td></tr>
+    <tr><td>Reconnect storm after a property blip</td><td>Medium</td><td>Gateway pressure</td><td>Jittered exponential backoff on the device; connection admission rate limiting at the gateway</td></tr>
+    <tr><td>LLM provider outage or rate limit</td><td>Medium</td><td>All properties in a cell</td><td>Level 2 degradation; model fallback; per-cell isolation limits the blast radius</td></tr>
+    <tr><td>ASR vendor outage</td><td>Medium</td><td>All properties in a cell</td><td>Automatic failover to the secondary vendor; then Level 3</td></tr>
+    <tr><td>Bad prompt or model release</td><td>Medium</td><td>Potentially fleet-wide</td><td>Eval gate in CI, canary properties, progressive rollout, one-click version pin (&sect;77). This is the highest-probability <em>self-inflicted</em> outage.</td></tr>
+    <tr><td>Device mis-bound to the wrong room</td><td>Medium</td><td>Severe for one guest</td><td>Continuous binding verification and mismatch alarm (&sect;22). Silent until you build detection.</td></tr>
+    <tr><td>PMS outage</td><td>Medium</td><td>Degraded context, no folio posting</td><td>Cached stay context; folio postings queue with reconciliation; agent tells the guest ordering is temporarily unavailable rather than accepting an order it cannot bill</td></tr>
+    <tr><td>Aurora failover</td><td>Low</td><td>Brief cell-wide</td><td>Multi-AZ, connection pooling with retry, Redis absorbs reads during failover</td></tr>
+    <tr><td>Region outage</td><td>Low</td><td>One cell</td><td>Multi-AZ in-region; cross-region DR with RPO 15&nbsp;min / RTO 4&nbsp;h. Full active-active is not justified at these volumes.</td></tr>
+    <tr><td>Edge appliance hardware failure</td><td>Medium at fleet scale</td><td>One property</td><td>HA pairs on large properties; spares on site; 4-hour replacement runbook; devices degrade to Level 5 meanwhile</td></tr>
+    <tr><td>Certificate expiry (fleet)</td><td>Low but catastrophic</td><td>Fleet-wide</td><td>Auto-renewal at 2/3 lifetime, alarm at 30 days, staggered expiry dates by design. A synchronised fleet-wide expiry is an extinction event &mdash; never issue the whole fleet on the same day.</td></tr>
+  </tbody>
+</table>
+
+<!-- ================= PART XIV ================= -->
+<h1 class="part"><span class="pn">Part XIV</span>Observability &amp; Evaluation</h1>
+
+<h2>70. Tracing an agent turn</h2>
+
+<pre class="ascii">
+ trace_id ─────────────────────────────────────────────────────────────────────────────────────►
+ │
+ ├─ span: device.wake                    attrs: device_id, wake_confidence, rssi, fw_version
+ ├─ span: gateway.session                attrs: tenant, property, room (hashed), conn_age
+ ├─ span: orchestrator.turn              attrs: turn_id, lane, language, degradation_level
+ │   ├─ span: asr.stream                 attrs: vendor, model, audio_ms, confidence, wer_proxy
+ │   ├─ span: redactor                   attrs: categories_found (counts only, never values)
+ │   ├─ span: router.classify            attrs: lane, match_rule, score
+ │   ├─ span: context.assemble           attrs: tokens_in, cache_hit_ratio, prefetch_hit
+ │   ├─ span: llm.generate               attrs: model, prompt_version, tokens_in/out, cached_tokens,
+ │   │                                          thinking_tokens, finish_reason, cost_usd, ttft_ms
+ │   ├─ span: policy.decide (×N)         attrs: tool, tier, verdict, rule_id, latency_ms
+ │   ├─ span: mcp.call (×N)              attrs: server, tool, cache_hit, latency_ms, error_class
+ │   │   └─ span: adapter.apply          attrs: vendor, property, capability, verified, retries
+ │   ├─ span: response.compose           attrs: templated|generated, length_chars
+ │   ├─ span: guard.output               attrs: violations (counts)
+ │   └─ span: tts.synthesize             attrs: vendor, voice, chars, cached, ttfb_ms
+ └─ span: device.playback                attrs: buffer_ms, barge_in, completed
+
+ One trace_id from wake word to playback, propagated through W3C traceparent on every hop,
+ including down the edge tunnel and back. OpenTelemetry GenAI semantic conventions for LLM spans.
+</pre>
+
+<h3>70.1 The audit record vs the trace</h3>
+<p>These are deliberately different artefacts with different lifetimes and different audiences. The <strong>trace</strong>
+is for engineers, sampled, retained ~14 days, and optimised for debugging. The <strong>audit record</strong> is for
+disputes, incidents and regulators &mdash; complete (never sampled), immutable, retained 13 months, and containing the
+policy verdicts. Do not try to make one serve both purposes: the sampling that makes tracing affordable is exactly what
+makes an audit trail worthless.</p>
+
+<h3>70.2 Cost control on observability</h3>
+<p>At 12.6&nbsp;M turns/month, full-fidelity tracing is expensive and mostly useless &mdash; you will never look at 99.9%
+of it. Sample: 100% of errors, 100% of T3+ actions, 100% of policy denials, 100% of escalations, 100% of turns for
+canary properties, and 1&ndash;5% of everything else. Aggregate metrics remain unsampled, because that is what alarms
+fire on.</p>
+
+<h2>71. Quality metrics</h2>
+<table class="tight">
+  <thead><tr><th style="width:24%">Metric</th><th style="width:34%">Definition</th><th style="width:42%">Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Task success rate</strong></td><td>Guest's goal achieved, judged by rubric on sampled turns</td><td>The headline quality number. Everything else is diagnostic.</td></tr>
+    <tr><td>Containment rate</td><td>Resolved without staff</td><td>The commercial value proposition &mdash; what the hotel is actually buying</td></tr>
+    <tr><td>Escalation rate (and reasons)</td><td>Turns routed to staff, categorised</td><td>Rising escalation is the earliest signal of a quality regression</td></tr>
+    <tr><td><strong>Fallback / &ldquo;I can't help&rdquo; rate</strong></td><td>Turns ending without progress</td><td>The V1 killer. Track it obsessively and cluster the causes weekly &mdash; each cluster is a roadmap item.</td></tr>
+    <tr><td>Clarification rate</td><td>Turns needing a clarifying question</td><td>Some is healthy. Above ~10% suggests ASR or entity modelling problems.</td></tr>
+    <tr><td>Barge-in rate</td><td>Guest interrupts the response</td><td><strong>An underrated quality signal</strong> &mdash; high barge-in means the assistant is too verbose or too slow</td></tr>
+    <tr><td>Repeat-utterance rate</td><td>Same request within 60&nbsp;s</td><td>Direct evidence the first attempt failed, without needing a human judge</td></tr>
+    <tr><td>ASR confidence distribution</td><td>Per property, per language</td><td>Identifies acoustically bad rooms and languages needing attention</td></tr>
+    <tr><td>Policy denial rate</td><td>Per tier, per rule</td><td>Spikes mean either a model regression or an attack</td></tr>
+    <tr><td>Action verification failure</td><td>Commands acked but state not observed to change</td><td>Finds failing BMS installs before the hotel complains</td></tr>
+    <tr><td>Guest rating</td><td>The existing smiley component</td><td>Noisy but directionally useful; correlate against task success to validate the rubric</td></tr>
+    <tr><td>Cost per turn</td><td>Per property, per lane</td><td>Attribution for pricing and for finding runaway prompts</td></tr>
+  </tbody>
+</table>
+
+<h2>72. The evaluation harness</h2>
+
+<p>This is the component that makes an agentic system shippable, and it is the one most often deferred until after the
+first bad release. Build it in week two, not month six.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:19%">Suite</th><th style="width:12%">Size</th><th style="width:34%">Contents</th><th style="width:35%">Gate</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Golden</strong></td><td>300&ndash;600 cases</td><td>Top-50 intents &times; phrasings, accents, languages, room configurations. Each with an expected tool call (or expected refusal) and an expected response shape.</td><td>Blocks merge. 100% pass required on tool-call correctness; response text judged on rubric.</td></tr>
+    <tr><td><strong>Adversarial</strong></td><td>200+ cases</td><td>Prompt injection in menus/FAQ/tool results, jailbreaks, cross-room requests, other-guest queries, spend manipulation, confirmation bypass, bulk-action attempts.</td><td>Blocks merge. <strong>Zero tolerance</strong> &mdash; any successful T3+ or cross-scope action fails the build.</td></tr>
+    <tr><td><strong>Safety</strong></td><td>100+ cases</td><td>Medical, fire, security, distress, child, harassment scenarios.</td><td>Blocks merge. Human-reviewed rubric, not LLM-judged alone.</td></tr>
+    <tr><td><strong>Capability matrix</strong></td><td>Per property type</td><td>The same request against properties with different manifests &mdash; asserts graceful handling of absent capabilities.</td><td>Blocks merge on capability regressions</td></tr>
+    <tr><td><strong>Regression / replay</strong></td><td>Growing</td><td>Real production turns (redacted) that previously failed, replayed against the new configuration.</td><td>Blocks merge. Every production bug adds a case &mdash; this is how the suite stays relevant.</td></tr>
+    <tr><td><strong>Latency</strong></td><td>50 cases</td><td>Timed end-to-end against the simulator.</td><td>Warns at +10% vs baseline, blocks at +25%</td></tr>
+    <tr><td><strong>Conformance</strong></td><td>Per property</td><td>Every capability exercised against real hardware in a designated test room.</td><td>Blocks go-live; runs nightly thereafter</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">Two traps in agent evaluation</div>
+  <p><strong>LLM-as-judge on safety cases.</strong> Use it for fluency and helpfulness rubrics where a wrong grade is
+  cheap. Do not use it as the sole gate on the safety or adversarial suites &mdash; the failure modes of the judge
+  correlate with the failure modes of the system under test, so it will confidently pass exactly the cases you most need
+  it to catch. Safety cases need deterministic assertions on the tool call plus periodic human review.</p>
+  <p><strong>Evaluating the model instead of the system.</strong> What matters is not whether Gemini produced good text;
+  it is whether the <em>right tool call</em> was proposed, the <em>right policy verdict</em> was reached, and the
+  <em>right physical outcome</em> occurred. Assert on tool calls and verdicts as structured data. Text assertions are
+  secondary.</p>
+</div>
+
+<h2>73. Red teaming</h2>
+<ul>
+  <li><strong>Before every major release:</strong> an internal exercise against the staging fleet with a written scope
+  &mdash; injection through every content path, cross-scope attempts, confirmation bypass, spend manipulation,
+  emergency-path abuse, and denial of service against a single property.</li>
+  <li><strong>Quarterly:</strong> external red team on the agent specifically, not just the infrastructure. Most
+  penetration testers will test your API; brief them explicitly to attack the agent's decision-making, the tool surface
+  and the confirmation flow.</li>
+  <li><strong>Continuously:</strong> every policy denial and guard violation from production is triaged; genuine attempts
+  become adversarial suite cases within the week.</li>
+  <li><strong>Bug bounty:</strong> worth considering once SOC 2 is in place. Scope it to a dedicated test property, never
+  to live guest rooms.</li>
+</ul>

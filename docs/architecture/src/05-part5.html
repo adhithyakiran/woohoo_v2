@@ -1,0 +1,303 @@
+<!-- ================= PART V ================= -->
+<h1 class="part"><span class="pn">Part V</span>The Agentic Core</h1>
+
+<h2>23. Orchestration pattern</h2>
+
+<p>Four patterns are viable. The choice is driven almost entirely by the latency budget, because a voice interface has no
+loading spinner.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:17%">Pattern</th><th style="width:29%">How it works</th><th style="width:27%">Why it fails here</th><th style="width:27%">Where it's still useful</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Single ReAct agent</strong></td><td>One model, one flat tool list, loop until done</td><td>Every turn pays a full LLM round-trip. &ldquo;Turn on the lights&rdquo; costs 800&nbsp;ms and a token bill it should not. Tool list grows past the point where selection stays reliable.</td><td>As the <em>agentic lane</em> inside a router &mdash; which is what we do.</td></tr>
+    <tr><td><strong>Router + specialist sub-agents</strong></td><td>A dispatcher classifies, then hands to a domain agent (automation / service / info)</td><td>Adds a serial LLM hop to every turn (~400&nbsp;ms) to solve a problem that a well-designed tool surface does not have. Cross-domain requests (&ldquo;cold <em>and</em> fix the shower&rdquo;) need re-joining.</td><td>If the tool surface ever exceeds ~40 tools. Design so it does not.</td></tr>
+    <tr><td><strong>Plan-and-execute</strong></td><td>Model produces a multi-step plan, then executes it</td><td>Wrong shape for the workload. Hotel requests are 1&ndash;3 actions with no meaningful dependency graph. Planning overhead buys nothing.</td><td>Long-running staff-side workflows (&ldquo;prepare the room for a VIP arrival&rdquo;), not guest turns.</td></tr>
+    <tr><td><strong>Hybrid fast-path + agent</strong></td><td>Deterministic matcher handles the head of the distribution; LLM handles the tail</td><td>&mdash;</td><td><strong>Chosen.</strong> See below.</td></tr>
+  </tbody>
+</table>
+
+<h3>23.1 The distribution argument</h3>
+<p>Hotel voice traffic is extraordinarily head-heavy. Across deployed in-room assistants the top ~20 utterance families
+&mdash; lights, temperature, DND, curtains, TV, checkout time, Wi-Fi password, housekeeping, towels, wake-up call
+&mdash; account for the majority of all traffic, and they are phrased in a narrow range of ways. Paying full agentic
+reasoning for &ldquo;turn off the lights&rdquo; is spending 800&nbsp;ms and a Gemini call to answer a question a
+50-line matcher answers in 4&nbsp;ms with higher reliability.</p>
+
+<p>The counter-argument &mdash; that a fast path is technical debt that will rot &mdash; is real, and it is why the fast
+path in this design is <strong>generated and validated by the eval harness</strong> rather than hand-maintained
+(&sect;24.3). If a fast-path rule ever disagrees with what the agent would have done, that is a test failure, and the
+rule is removed.</p>
+
+<div class="box decision">
+  <div class="bt">Decision D7 &mdash; Three-lane router</div>
+  <p>Every turn is classified into exactly one of three lanes by a deterministic classifier that costs no LLM call:</p>
+  <ul>
+    <li><strong>Fast lane</strong> &mdash; high-confidence match against a curated grammar of top intents, with all slots
+    filled and no ambiguity. Executes directly through the PDP. Target: 55&ndash;65% of turns, p50 under 600&nbsp;ms.</li>
+    <li><strong>Agentic lane</strong> &mdash; everything else. Full Gemini reasoning over the capability tool surface.
+    Target: 30&ndash;40% of turns.</li>
+    <li><strong>Clarify lane</strong> &mdash; ASR confidence below threshold, or a known-ambiguous reference with no
+    session context to resolve it. Emits a targeted clarifying question without an LLM call where possible.
+    Target: &lt;8% of turns.</li>
+  </ul>
+</div>
+
+<h2>24. The three-lane router</h2>
+
+<pre class="ascii">
+                                    ┌──────────────────────┐
+   transcript + confidence ────────►│   ROUTER (no LLM)    │
+   + TurnContext + session          └──────────┬───────────┘
+                                               │
+        ┌──────────────────────────────────────┼──────────────────────────────────────┐
+        │                                      │                                      │
+   ┌────▼─────────────┐              ┌─────────▼──────────┐              ┌───────────▼────────────┐
+   │ ① FAST LANE      │              │ ② AGENTIC LANE     │              │ ③ CLARIFY LANE         │
+   │                  │              │                    │              │                        │
+   │ conditions:      │              │ everything not      │              │ conditions:           │
+   │ • ASR conf ≥0.85 │              │ matched, incl.:     │              │ • ASR conf &lt; 0.60     │
+   │ • exact grammar  │              │ • compound requests │              │ • unresolved anaphora │
+   │   match          │              │ • free-text service │              │   with no session ctx │
+   │ • all slots      │              │ • questions / info  │              │ • ambiguous entity    │
+   │   filled         │              │ • relative changes  │              │   ("the light" when   │
+   │ • no anaphora    │              │   needing state     │              │    the room has 5)    │
+   │ • single action  │              │ • anything unknown  │              │                       │
+   │ • tier ≤ T2      │              │                     │              │ action: targeted      │
+   │                  │              │ → Gemini 2.5 Flash  │              │  question, template-  │
+   │ → direct tool    │              │ → tool loop         │              │  based, no LLM if     │
+   │   proposal       │              │ → PDP per call      │              │  possible             │
+   │ → PDP            │              │ → compose reply     │              │ → sets pending_       │
+   │ → templated      │              │                     │              │   clarification in    │
+   │   confirmation   │              │ ~1.9s p50           │              │   session, next turn  │
+   │ ~0.6s p50        │              │ (perceived ~0.6s)   │              │   resolves it         │
+   └────┬─────────────┘              └─────────┬──────────┘              └───────────┬────────────┘
+        │                                      │                                     │
+        └──────────────────────────────────────┴─────────────────────────────────────┘
+                                               │
+                                    ┌──────────▼───────────┐
+                                    │ SHADOW EVALUATION    │  fast-lane turns are replayed through
+                                    │ (async, sampled 5%)  │  the agentic lane offline; disagreements
+                                    └──────────────────────┘  are logged as eval failures (§24.3)
+</pre>
+
+<h3>24.1 Fast lane escalation</h3>
+<p>The fast lane must be able to admit defeat. If the matched action's PDP verdict is anything other than
+<code>ALLOW</code>, or the tool execution returns an error, or the resolved entity is ambiguous, the turn
+<strong>escalates to the agentic lane</strong> rather than failing. The guest never learns which lane served them; they
+only notice that some answers arrive faster.</p>
+
+<h3>24.2 What the fast lane may never do</h3>
+<ul>
+  <li>Anything at risk tier T3 or above (&sect;44). Money and irreversible actions always get full reasoning plus explicit
+  confirmation.</li>
+  <li>Anything requiring a state read to decide the target value (&ldquo;a bit warmer&rdquo;) &mdash; unless the state is
+  already in the pre-fetched snapshot <em>and</em> the delta rule is unambiguous.</li>
+  <li>Anything with a free-text field. Free text means judgement; judgement means the agent.</li>
+  <li>Anything when the session has a pending clarification.</li>
+</ul>
+
+<h3>24.3 Keeping the fast lane honest</h3>
+<p>Five percent of fast-lane turns are asynchronously replayed through the agentic lane. Where the agent would have
+chosen a different action, the disagreement is recorded. A rule whose disagreement rate exceeds 2% is automatically
+flagged and, if not fixed within a release cycle, disabled. This turns the fast path from accumulating debt into a
+continuously validated cache of the agent's own behaviour &mdash; which is exactly what it should be.</p>
+
+<h2>25. Model selection and routing</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Stage</th><th style="width:20%">Model</th><th style="width:14%">Why</th><th style="width:22%">Budget</th><th style="width:22%">Fallback</th></tr></thead>
+  <tbody>
+    <tr><td>Lane classification</td><td><strong>No model</strong> &mdash; deterministic grammar + embeddings</td><td>Must cost &lt;10&nbsp;ms</td><td>&mdash;</td><td>&mdash;</td></tr>
+    <tr><td>Main agentic turn</td><td><strong>Gemini 2.5 Flash</strong></td><td>Best latency/capability/cost balance; strong function calling; thinking budget controllable</td><td>&le;6&nbsp;k input, &le;600 output, thinking budget capped low</td><td>Gemini Flash-Lite &rarr; degraded mode (&sect;29)</td></tr>
+    <tr><td>Short-utterance classification &amp; slot filling</td><td><strong>Gemini 2.5 Flash-Lite</strong></td><td>Cheapest, fastest; sufficient for constrained structured output</td><td>&le;2&nbsp;k in, &le;120 out</td><td>Flash</td></tr>
+    <tr><td>Response composition (when not templated)</td><td>Same call as the agentic turn</td><td>A second LLM pass costs ~300&nbsp;ms &mdash; avoid it whenever a template will do</td><td>&mdash;</td><td>Template</td></tr>
+    <tr><td>Complex escalation / staff-side summarisation</td><td><strong>Gemini 2.5 Pro</strong></td><td>Off the guest latency path; quality matters more than speed</td><td>Generous</td><td>Flash</td></tr>
+    <tr><td>Offline eval judging</td><td><strong>Gemini 2.5 Pro</strong> + rule-based assertions</td><td>Never in production path</td><td>&mdash;</td><td>&mdash;</td></tr>
+    <tr><td>Embeddings (RAG, fast-lane similarity)</td><td>Gemini embedding model</td><td>&mdash;</td><td>&mdash;</td><td>Local model</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D8 &mdash; Model policy</div>
+  <p><strong>Gemini 2.5 Flash is the default</strong>, with the thinking budget explicitly capped &mdash; extended
+  reasoning is a latency disaster on a voice path and rarely improves a request as simple as &ldquo;dim the
+  lights&rdquo;. Model IDs are <strong>configuration, not code</strong>, resolvable per property and per lane, so a
+  model upgrade is a staged rollout rather than a deploy.</p>
+  <p><strong>Keep one non-Google fallback wired but dormant.</strong> Not because Gemini is unreliable, but because a
+  single-provider dependency on the reasoning core of a product installed in guest rooms is a commercial risk a hotel
+  chain's procurement team will raise. The <code>LlmProvider</code> interface plus a smoke-tested alternate path is
+  cheap insurance; you do not need to run it.</p>
+  <p><strong>Context caching:</strong> the system prompt, tool schemas and property-invariant context are stable across
+  turns and across guests in the same property. Cache them. At scale this is a large fraction of input tokens and
+  it also cuts time-to-first-token.</p>
+</div>
+
+<h2>26. Prompt architecture and context assembly</h2>
+
+<p>The prompt is a <strong>versioned build artefact</strong>, assembled from layers with different lifetimes and different
+trust levels. Treating it as a string in the codebase is how agent systems become unshippable.</p>
+
+<pre class="ascii">
+┌─ LAYER 0 · SYSTEM IDENTITY ────────────────────────── versioned artefact, changes ~monthly, CACHED ──┐
+│ Who the assistant is, tone, hard behavioural rules, refusal policy, escalation policy,               │
+│ the "you propose, the platform disposes" contract, output format contract.                           │
+│ NEVER contains tenant data. Identical for every guest in every hotel.                                │
+├─ LAYER 1 · BRAND &amp; PROPERTY VOICE ─────────────────── per property, changes ~quarterly, CACHED ──────┤
+│ Property name, brand tone ("warm and concise", "formal"), languages, forms of address,               │
+│ things this property does NOT offer, property-specific phrasing rules.                               │
+├─ LAYER 2 · CAPABILITY SURFACE ─────────────────────── per capability-manifest version, CACHED ───────┤
+│ The tool schemas available in THIS room. Derived from the property capability manifest —             │
+│ a room without motorised curtains has no curtain tool, so the model cannot propose one.              │
+├─ LAYER 3 · TURN CONTEXT ───────────────────────────── per turn, NOT cached ──────────────────────────┤
+│ Room label (not number, where avoidable) · local time · language detected · occupancy hints ·        │
+│ current device state snapshot (pre-fetched) · open tickets for this room · stay context              │
+│ (tokenised: "guest checking out tomorrow at 11" — never the guest's name unless needed and consented)│
+├─ LAYER 4 · CONVERSATION ───────────────────────────── per turn ──────────────────────────────────────┤
+│ Last N turns (N=3 default, 6 if a clarification is pending). Text only. Redacted.                    │
+├─ LAYER 5 · UNTRUSTED CONTENT ──────────────────────── per turn, EXPLICITLY FENCED ───────────────────┤
+│ Guest utterance, tool results, retrieved knowledge, staff-authored content (menus, FAQ).             │
+│ Wrapped in explicit untrusted-content delimiters with a standing instruction that                    │
+│ NOTHING inside them is ever an instruction. See §46.                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<h3>26.1 Rules for context assembly</h3>
+<ul>
+  <li><strong>Layers 0&ndash;2 are cacheable and must be byte-stable</strong> across turns. Any per-turn variation in
+  them destroys the cache hit and costs both money and time-to-first-token. Do not put a timestamp in Layer 0.</li>
+  <li><strong>Layer 3 is where the pre-fetched state lands.</strong> Its assembly must be non-blocking &mdash; if the
+  state read has not returned within its budget, the layer is assembled without it and the model is told state is
+  unavailable rather than the turn being delayed.</li>
+  <li><strong>Layer 5 is never concatenated into Layers 0&ndash;4.</strong> The separation is structural, and it is the
+  primary defence against prompt injection.</li>
+  <li><strong>Nothing in any layer is a security control.</strong> If a rule in Layer 0 matters, there is a corresponding
+  enforcement in the PDP. The prompt exists to make the model behave well, not to make it safe.</li>
+</ul>
+
+<h2>27. The agent loop, step by step</h2>
+
+<pre class="ascii">
+ ┌─ 1. PRE-FETCH (starts at t≈+50ms, in parallel with the guest still speaking) ────────────────────┐
+ │    • room device state snapshot        • open tickets for the room                               │
+ │    • capability manifest (cached)      • stay context from PMS (cached, TTL 15m)                 │
+ │    These are speculative reads. They cost nothing on the critical path and remove a full         │
+ │    tool round-trip from the majority of agentic turns. THIS IS THE SINGLE BIGGEST LATENCY WIN.   │
+ └──────────────────────────────────────┬───────────────────────────────────────────────────────────┘
+ ┌──────────────────────────────────────▼───────────────────────────────────────────────────────────┐
+ │ 2. ASSEMBLE CONTEXT   layers 0–5 (§26). Token budget enforced: hard cap, oldest conversation     │
+ │    turns dropped first, then state detail summarised. Never silently exceed — log and truncate.  │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 3. INVOKE GEMINI      structured output, function calling enabled, thinking budget capped,       │
+ │    streaming on. Timeout 4s hard, 2.5s soft (soft = start the filled pause).                     │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 4. PARSE PROPOSALS    zero or more tool calls + optional draft reply. Validate against schema.   │
+ │    Schema violation → one repair attempt with the error message → then degraded mode.            │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 5. POLICY (per proposed call, independently) ──► ALLOW / CONFIRM / DENY / ESCALATE               │
+ │    Verdicts written to the audit record BEFORE any execution.                                    │
+ │    CONFIRM → the turn ends here with a spoken confirmation question; the pending action is       │
+ │    stored in session with a 90s TTL and a single-use token. It is NOT re-derived next turn.      │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 6. EXECUTE            allowed calls dispatched via MCP Gateway, in parallel where independent.   │
+ │    Idempotency key = hash(turn_id, tool, canonical_args). Per-call timeout by tool class.        │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 7. VERIFY             for state-changing automation, read back the resulting state. "I set it"   │
+ │    must mean "I observed it set". Unverified writes are reported as "I've asked for that".       │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 8. COMPOSE            templated confirmation where the outcome fits a known shape (most turns);  │
+ │    second LLM pass only when results need genuine synthesis. Saves ~300ms on the common case.    │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 9. GUARD              output check: no other-room information, no invented amenities, no PII     │
+ │    leakage, length cap (a voice reply over ~35 words is a design failure), language match.       │
+ ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 10. SPEAK + RECORD    stream TTS; seal and emit the audit record; update session; emit events.   │
+ └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ LOOP CONTROL:  max 3 tool-call rounds per turn · max 6 tool calls total · hard 8s wall clock ·
+                token budget enforced · on any breach → apologise, escalate to staff, log for review.
+                An agent that is still looping after 8 seconds has failed, whatever it eventually returns.
+</pre>
+
+<h3>27.2 Why pre-fetch matters more than it looks</h3>
+<p>In a naive implementation, &ldquo;make it warmer&rdquo; costs: LLM call (&rarr; proposes <code>get_state</code>),
+tool round-trip, second LLM call (&rarr; proposes <code>set_temperature</code>), tool round-trip. That is two LLM calls
+and two tool round-trips &mdash; roughly 1.6&nbsp;s of avoidable serial latency and double the token cost. With the
+state snapshot already in Layer 3, it is one LLM call and one tool round-trip. Across the fleet this is the difference
+between a viable and an unviable unit cost, and it is why &sect;27 step 1 begins before the guest has finished
+speaking.</p>
+
+<h2>28. Session, memory and disambiguation</h2>
+
+<table>
+  <thead><tr><th style="width:17%">Layer</th><th style="width:23%">Contents</th><th style="width:11%">Store</th><th style="width:11%">TTL</th><th style="width:38%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Turn</strong></td><td>Transcript, context digest, proposals, verdicts, results</td><td>In-memory &rarr; audit</td><td>Turn</td><td>Never reused as input except via the conversation layer</td></tr>
+    <tr><td><strong>Conversation</strong></td><td>Last 6 turns, last-referenced entity, pending clarification, pending confirmation token</td><td>Redis</td><td><strong>30&nbsp;min</strong> idle</td><td>Short deliberately. A guest returning after two hours is starting fresh, and stale context causes wrong-target actions.</td></tr>
+    <tr><td><strong>Stay</strong></td><td>In-stay learned preferences (preferred temperature, usual wake time, dietary note), open tickets, spend to date</td><td>Redis + Postgres</td><td><strong>Checkout + 24&nbsp;h</strong>, then purged</td><td>Hard-deleted on checkout event from the PMS. This is the layer that makes the assistant feel attentive without being creepy.</td></tr>
+    <tr><td><strong>Cross-stay</strong></td><td>Preferences persisted across visits, keyed to a loyalty identity</td><td>Postgres, encrypted</td><td>Until withdrawn</td><td><strong>Explicit opt-in only</strong>, per &sect;55. Off by default. This is the highest-value and highest-risk feature in the product; do not ship it in Phase&nbsp;1.</td></tr>
+    <tr><td><strong>Property</strong></td><td>FAQ, menus, hours, policies, local recommendations</td><td>Postgres + pgvector</td><td>Until edited</td><td>Not guest data. Retrieved on demand, cited, and treated as untrusted content (&sect;46).</td></tr>
+  </tbody>
+</table>
+
+<h3>28.1 Anaphora and disambiguation</h3>
+<p>&ldquo;Turn it off&rdquo;, &ldquo;make it cooler&rdquo;, &ldquo;the other one&rdquo;, &ldquo;same as
+yesterday&rdquo; &mdash; these are the utterances V1 could not handle, and getting them right is most of the perceived
+intelligence gain of V2.</p>
+<ul>
+  <li><strong>Last-referenced entity</strong> is tracked explicitly in the conversation layer (entity type, ID, label,
+  turn index) rather than left for the model to infer from history. Explicit beats implicit for anything that
+  determines which physical device gets actuated.</li>
+  <li><strong>Resolution order:</strong> (1) explicit reference in the utterance; (2) last-referenced entity if within 2
+  turns; (3) if exactly one device of the plausible type exists in the room, use it; (4) otherwise <strong>ask</strong>.</li>
+  <li><strong>Never guess between two physical devices.</strong> A wrong guess on &ldquo;turn off the light&rdquo; in a
+  suite with five zones is a bad experience; a wrong guess that turns off a light the guest was reading by is worse
+  than asking. The clarify lane exists for this.</li>
+  <li><strong>Relative changes require state.</strong> &ldquo;Warmer&rdquo; with no known current setpoint is a
+  clarification, not a guess. The pre-fetched snapshot means this is almost always available.</li>
+</ul>
+
+<h2>29. Deterministic degraded mode</h2>
+
+<p>Gemini will be unavailable, rate-limited or slow at some point. What happens then is a product decision, and the
+default &mdash; an error message &mdash; is the wrong one.</p>
+
+<pre class="ascii">
+ LEVEL 0 · NORMAL          Fast lane + agentic lane + clarify lane. Full capability.
+
+ LEVEL 1 · LLM SLOW        Trigger: p95 LLM latency &gt; 2.5s over a 60s window.
+                           Action: cap thinking budget to zero, drop to Flash-Lite for slot filling,
+                           widen fast-lane matching thresholds, always emit the filled pause.
+                           Guest impact: none noticeable.
+
+ LEVEL 2 · LLM DEGRADED    Trigger: LLM error rate &gt; 10%, or p95 &gt; 4s.
+                           Action: fast lane only. Anything that does not match the grammar gets:
+                           "I can help with lights, temperature, do-not-disturb and service requests
+                            right now. For anything else let me connect you to the front desk."
+                           Escalation path to staff stays fully open. Guest impact: reduced scope,
+                           still useful. THIS IS THE MOST IMPORTANT LEVEL TO GET RIGHT — it is the
+                           difference between a degraded product and a broken one.
+
+ LEVEL 3 · ASR DOWN        Trigger: both ASR vendors failing.
+                           Action: on-screen touch UI on the device takes over — the screen becomes
+                           the interface. Voice announces the switch once. All automation and service
+                           requests remain available by touch.
+
+ LEVEL 4 · WAN DOWN        Trigger: device cannot reach cloud.
+                           Action: on-device grammar (~25 phrases) → LAN → Edge Gateway → BMS.
+                           Lights, climate, DND, curtains, TV still work. Service requests are queued
+                           locally and flushed on reconnect, and the guest is TOLD they are queued.
+                           Screen shows an offline indicator.
+
+ LEVEL 5 · EDGE DOWN       Trigger: Edge Gateway unreachable and cloud unreachable.
+                           Action: device announces the failure plainly and points to the room phone.
+                           A honest "I can't reach the room systems right now, please use the phone"
+                           beats silence or a lie. Health alert fires to ops.
+</pre>
+
+<div class="box good">
+  <div class="bt">The degraded-mode principle</div>
+  <p>At every level the assistant <strong>says what it can still do</strong>, rather than what it cannot. &ldquo;I can
+  help with lights, temperature and do-not-disturb right now&rdquo; keeps the guest using the product; &ldquo;Sorry, I'm
+  having trouble&rdquo; teaches them to stop trying. The set of capabilities available at each level is
+  configuration, so it can be tuned per property without a release.</p>
+</div>

@@ -1,0 +1,352 @@
+<!-- ================= PART IV ================= -->
+<h1 class="part"><span class="pn">Part IV</span>Voice &amp; Edge Layer</h1>
+
+<h2>14. Wake word</h2>
+
+<p>The wake word is the only always-on listening component, which makes it simultaneously the most privacy-sensitive and
+the most performance-critical piece of the device software. It must run entirely locally, with no audio leaving the
+device until it fires.</p>
+
+<table>
+  <thead><tr><th style="width:16%">Engine</th><th style="width:20%">Licensing</th><th style="width:15%">Footprint</th><th style="width:26%">Custom phrase</th><th style="width:23%">Assessment for Woohoo</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Sensory TrulyHandsfree</strong> (current, v6.12)</td><td>Commercial, per-device royalty</td><td>~1&ndash;3&nbsp;MB, &lt;5% of one ARM core</td><td>Vendor-trained model; weeks of lead time, per-phrase fee</td><td><strong>Keep.</strong> It already works, it is already integrated, and re-tuning wake performance is a multi-month project with no product upside. The SDK version is old &mdash; upgrade it, don't replace it.</td></tr>
+    <tr><td><strong>Picovoice Porcupine</strong></td><td>Commercial, per-device; self-service console</td><td>~1&nbsp;MB, very low CPU</td><td>Self-service in minutes &mdash; a genuine operational advantage</td><td><strong>Second source.</strong> Worth qualifying behind the interface precisely because custom phrases are self-service: if a hotel chain wants its own wake word (&ldquo;Hello Taj&rdquo;), Porcupine makes that a same-day change.</td></tr>
+    <tr><td><strong>openWakeWord</strong></td><td>Apache 2.0</td><td>~2&ndash;5&nbsp;MB, moderate CPU</td><td>Self-trained, synthetic-data pipeline; free</td><td>Zero licence cost, but you own the false-accept tuning. Viable for a low-cost SKU or a dev/simulator build. Not for the flagship.</td></tr>
+    <tr><td><strong>Cloud wake word</strong></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td><strong>Rejected outright.</strong> Requires continuous audio streaming from a hotel bedroom. Legally indefensible and commercially unsellable.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D6 &mdash; Wake word</div>
+  <p>Keep Sensory TrulyHandsfree, upgrade the SDK, and place it behind a <code>WakeWordEngine</code> interface on the
+  device (<code>start()</code>, <code>onDetected(confidence, timestampMs)</code>, <code>setSensitivity()</code>,
+  <code>pause()</code>). Qualify Picovoice Porcupine as a second implementation within six months &mdash; not to switch,
+  but so that per-chain custom wake words become a commercial option rather than a vendor negotiation.</p>
+  <p><strong>Required behaviours regardless of engine:</strong> a 500&nbsp;ms circular pre-roll buffer so the first word
+  after the wake phrase is never clipped; per-property sensitivity tuning (a suite by a lift shaft needs different
+  settings than a quiet corner room); a false-accept counter reported as telemetry (a device with a high FA rate is
+  usually next to a TV); and hard discard of the ring buffer whenever the wake word does not fire.</p>
+</div>
+
+<h2>15. The STT placement decision: device vs cloud</h2>
+
+<p>This is the question you specifically asked, and it deserves a real answer rather than &ldquo;it depends&rdquo;. The
+answer is that <strong>the question is wrong as posed</strong> &mdash; speech-to-text is not one function, it is five, and
+they belong in different places.</p>
+
+<h3>15.1 Decomposing &ldquo;speech to text&rdquo;</h3>
+<table>
+  <thead><tr><th style="width:18%">Sub-function</th><th style="width:12%">Placement</th><th style="width:70%">Why</th></tr></thead>
+  <tbody>
+    <tr><td>Acoustic echo cancellation</td><td><strong>Device</strong></td><td>Must run before the signal leaves the mic path, or barge-in is impossible. The device knows what it is playing; the cloud does not.</td></tr>
+    <tr><td>Beamforming / noise suppression</td><td><strong>Device</strong></td><td>Requires the raw multi-mic array. Sending N channels to the cloud multiplies bandwidth for no benefit.</td></tr>
+    <tr><td>Wake word</td><td><strong>Device</strong></td><td>Privacy. Non-negotiable (&sect;14).</td></tr>
+    <tr><td>Voice activity detection + endpointing</td><td><strong>Device</strong></td><td>Saves 200&ndash;400&nbsp;ms per turn versus server-side endpointing, because the device can signal end-of-turn the instant it detects it rather than the cloud waiting out a silence timer over a jittery link. This is the largest single latency win available and it is free.</td></tr>
+    <tr><td><strong>Transcription itself</strong></td><td><strong>Cloud</strong></td><td>The contested one. Analysed below.</td></tr>
+  </tbody>
+</table>
+
+<h3>15.2 The case for on-device transcription, taken seriously</h3>
+<p>It is a real case and it is getting stronger. Whisper-small, Moonshine and NVIDIA Parakeet-class models now run in
+real time on modest ARM SoCs. On-device transcription would mean: no audio ever leaves the room (which dissolves most of
+Part XI's consent problem), no per-minute ASR cost at all, and functioning voice control during a WAN outage. At 100,000
+devices, ASR is a meaningful line item; making it zero is attractive.</p>
+
+<h3>15.3 Why it still loses, for this product</h3>
+
+<table>
+  <thead><tr><th style="width:20%">Factor</th><th style="width:26%">On-device</th><th style="width:26%">Cloud streaming</th><th style="width:28%">Verdict for a hotel</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Accent breadth</strong></td><td>Small models degrade sharply on non-native and heavily accented English. A hotel serves guests from everywhere.</td><td>Large multilingual models are trained precisely for this and are measurably better on accented speech</td><td><strong>Decisive.</strong> The guest population is the most accent-diverse of any consumer voice product. This alone settles it.</td></tr>
+    <tr><td><strong>Hotel-specific vocabulary</strong></td><td>Cannot be biased at runtime without shipping a per-property model update to every device</td><td>Phrase hints / custom vocabulary injected per session, per property &mdash; menu items, staff titles, amenity names, local landmarks</td><td><strong>Decisive.</strong> &ldquo;Bring me a masala dosa to 412&rdquo; and &ldquo;book the Chambers lounge&rdquo; fail without biasing.</td></tr>
+    <tr><td><strong>Language switching</strong></td><td>One model per language, or a large multilingual model you cannot fit</td><td>Multilingual and code-switching supported centrally; language changes by config</td><td><strong>Decisive.</strong> A property in Dubai needs EN/AR/HI/RU without a firmware change.</td></tr>
+    <tr><td><strong>Improvement loop</strong></td><td>Improving accuracy requires an OTA to the whole fleet</td><td>Improving accuracy is a config change, deployed in minutes</td><td>Strongly favours cloud. You will tune ASR weekly in year one.</td></tr>
+    <tr><td><strong>Hardware cost</strong></td><td>Needs a materially better SoC and more RAM &mdash; a real BOM increase per unit, multiplied by every room</td><td>Runs on the existing hub</td><td>Favours cloud. The BOM delta across 100k units dwarfs several years of ASR fees.</td></tr>
+    <tr><td><strong>Latency</strong></td><td>~200&ndash;500&nbsp;ms local inference, no network</td><td>~120&ndash;300&nbsp;ms with streaming, overlapped with speech</td><td><strong>Roughly a wash.</strong> Streaming ASR transcribes <em>while</em> the guest talks; the only serial cost is finalisation. The intuition that cloud is slower is wrong for streaming.</td></tr>
+    <tr><td><strong>Bandwidth</strong></td><td>Sends ~200 bytes of text</td><td>Sends ~10&ndash;16&nbsp;kbps Opus for the utterance duration &asymp; <strong>~8&ndash;12&nbsp;KB per turn</strong></td><td>Immaterial. At 6 turns/device/day this is under 100&nbsp;KB/device/day &mdash; less than one web page.</td></tr>
+    <tr><td><strong>Privacy / consent</strong></td><td>Much stronger story: audio never leaves the room</td><td>Requires notice, DPA, no-retention terms, regional endpoints</td><td><strong>The only factor that genuinely favours device</strong>, and it is a serious one. Mitigated, not eliminated, by &sect;57.</td></tr>
+    <tr><td><strong>WAN outage</strong></td><td>Keeps working</td><td>Fails</td><td>Real, but addressed by the on-device fallback grammar (&sect;15.5) at a fraction of the cost of full on-device ASR.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D1 &mdash; STT placement</div>
+  <p><strong>Cloud streaming ASR is the primary path.</strong> The device performs AEC, beamforming, wake-word detection,
+  VAD and endpointing, and streams Opus only between wake-word fire and end-of-turn. Audio is held in memory in the
+  cloud for the duration of recognition and is <strong>never written to disk</strong>.</p>
+  <p><strong>Plus a small on-device command grammar</strong> (&sect;15.5) covering roughly 25 utterances, used only when the
+  WAN is unavailable. This buys the outage resilience that motivates on-device ASR without paying its accuracy,
+  hardware or maintenance costs.</p>
+  <p><strong>Revisit trigger:</strong> re-evaluate full on-device ASR when (a) a chain contractually requires
+  audio never to leave the property, or (b) monthly ASR spend exceeds the amortised BOM delta of a better SoC across
+  the fleet &mdash; whichever comes first. Keep the <code>AsrProvider</code> interface clean so that day is a swap, not
+  a rewrite.</p>
+</div>
+
+<h3>15.4 The hybrid variant worth keeping in your pocket</h3>
+<p>There is a third placement nobody asks about and it fits this product unusually well: <strong>ASR on the property's
+Edge Gateway</strong>. Audio leaves the room but never leaves the building. A single edge appliance with a modest GPU or
+a capable CPU can serve a few hundred rooms at realistic concurrency, because hotel voice traffic is sparse and bursty.
+This gives the privacy story of on-device (audio stays on-premises &mdash; a much easier conversation with a hotel's
+legal team), the per-property vocabulary biasing of cloud, zero per-minute fees, and WAN-outage resilience. What it costs
+is edge hardware, fleet-wide model management, and accuracy somewhat below the best cloud models.</p>
+<div class="box info">
+  <div class="bt">Recommendation on edge ASR</div>
+  <p>Do not build it now &mdash; it is a distraction from proving the agent. But <strong>design the Edge Gateway with
+  enough headroom to host it later</strong> (spec the appliance with an upgrade path), and keep <code>AsrProvider</code>
+  implementable at the edge. This becomes your answer when a European or Gulf chain says &ldquo;guest audio may not leave
+  our premises&rdquo; &mdash; and one of them will.</p>
+</div>
+
+<h3>15.5 The offline command grammar</h3>
+<p>A fixed, on-device, ~25-phrase recogniser (the same engine family as the wake word handles this well) covering only
+the actions the device can perform through its local fallback path: lights on/off/dim, temperature up/down, DND on/off,
+curtains, TV power, and &ldquo;call the front desk&rdquo;. When the WAN is down, the device announces the limitation once
+(&ldquo;I'm offline right now &mdash; I can still do lights, temperature and do-not-disturb&rdquo;) and operates on this
+grammar against the Edge Gateway's local rules. Everything else gets a clear refusal and a pointer to the room phone.</p>
+
+<h2>16. ASR vendor selection</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">Vendor</th><th style="width:12%">Indicative price&dagger;</th><th style="width:12%">Streaming finalisation</th><th style="width:20%">Phrase boosting / custom vocab</th><th style="width:18%">Residency &amp; retention</th><th style="width:24%">Assessment</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Deepgram Nova-3</strong></td><td>~$0.006&ndash;0.008/min</td><td>Very fast (~100&ndash;200&nbsp;ms)</td><td>Keyterm prompting; strong</td><td>Self-hosted / VPC deployment available &mdash; unusual and valuable</td><td><strong>Primary candidate.</strong> Best latency/price/controllability combination. The on-prem option is a genuine differentiator for the residency conversations in Part&nbsp;XI.</td></tr>
+    <tr><td><strong>Google STT v2 (chirp_2)</strong></td><td>~$0.016/min</td><td>Fast (~150&ndash;300&nbsp;ms)</td><td>Speech adaptation / phrase sets; good</td><td>Regional endpoints incl. EU, India; data-use controls</td><td><strong>Co-primary.</strong> Strongest multilingual and accented-English coverage; you are already on Google for the LLM, which simplifies contracts and residency posture.</td></tr>
+    <tr><td><strong>AssemblyAI Universal-Streaming</strong></td><td>~$0.0025&ndash;0.005/min</td><td>Very fast</td><td>Word boost</td><td>US/EU regions</td><td>Cheapest credible option; strong English, weaker breadth outside it. Good cost lever later.</td></tr>
+    <tr><td><strong>Azure Speech</strong></td><td>~$0.016/min</td><td>Fast</td><td>Custom Speech (trainable models)</td><td>Broad regional coverage incl. UAE</td><td>Best regional footprint if Gulf residency becomes contractual. Heaviest integration.</td></tr>
+    <tr><td><strong>AWS Transcribe streaming</strong></td><td>~$0.024/min</td><td>Moderate</td><td>Custom vocabulary</td><td>Native to your AWS estate</td><td>Convenient, but the most expensive and not the most accurate. Not recommended as primary.</td></tr>
+    <tr><td><strong>Self-hosted Whisper/Parakeet</strong></td><td>GPU cost only</td><td>Variable</td><td>Full control</td><td>Total control</td><td>Only once volume justifies GPU fleet ops. Keep as the Phase-3 cost lever.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D3 &mdash; ASR</div>
+  <p>Build the <code>AsrProvider</code> abstraction first, then <strong>bake off Deepgram Nova-3 against Google STT v2
+  (chirp_2) on your own recorded hotel audio</strong> &mdash; not on public benchmarks, which are useless here. The
+  evaluation set must be: 500+ real utterances from a live property, weighted toward accented English, with TV and HVAC
+  noise present, including menu items and property proper nouns. Measure WER, but weight <strong>entity error rate</strong>
+  (did it get the room number, the menu item, the temperature) far higher than raw WER, because that is what determines
+  whether the turn succeeds.</p>
+  <p><strong>Ship with two vendors wired</strong> from day one, selected per property by config. This is not
+  over-engineering: it is how you survive a vendor outage, how you negotiate price, and how you satisfy a chain that
+  insists on a specific processor.</p>
+</div>
+
+<h2>17. TTS and response audio</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Option</th><th style="width:14%">Indicative price&dagger;</th><th style="width:12%">TTFB</th><th style="width:26%">Voice quality / brand</th><th style="width:32%">Assessment</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Google Chirp3-HD</strong></td><td>~$30/M chars</td><td>~200&ndash;400&nbsp;ms</td><td>Excellent, broad multilingual</td><td><strong>Primary.</strong> Same vendor as the LLM, strong multilingual coverage, good regional endpoints.</td></tr>
+    <tr><td><strong>Amazon Polly (Neural / Generative)</strong></td><td>~$16 / ~$30 per M chars</td><td>~150&ndash;300&nbsp;ms</td><td>Good; Generative is markedly better</td><td><strong>Fallback.</strong> Already in the codebase (V1 uses it on-device), lowest integration cost, native to AWS. Move it server-side.</td></tr>
+    <tr><td><strong>ElevenLabs Flash v2.5</strong></td><td>~$50&ndash;80/M chars</td><td>~75&ndash;150&nbsp;ms</td><td>Best-in-class naturalness; voice cloning</td><td>Premium tier only. Where it wins: a chain that wants its own brand voice. Price it as an upsell, not a default.</td></tr>
+    <tr><td><strong>Cartesia Sonic</strong></td><td>~$20&ndash;40/M chars</td><td>~90&nbsp;ms</td><td>Very good, extremely fast</td><td>Strongest pure-latency option. Worth qualifying if perceived responsiveness becomes the binding constraint.</td></tr>
+    <tr><td><strong>On-device TTS</strong></td><td>Free</td><td>~0&nbsp;ms</td><td>Poor to acceptable</td><td>Keep <em>only</em> for offline mode and earcons. A robotic voice undermines the premium positioning.</td></tr>
+  </tbody>
+</table>
+
+<h3>17.1 The phrase cache &mdash; the highest-value optimisation in the audio path</h3>
+<p>A large fraction of what the assistant says is drawn from a small set of phrases: acknowledgements
+(&ldquo;Sure, one moment&rdquo;), confirmations (&ldquo;Done&rdquo;, &ldquo;I've set it to 23 degrees&rdquo;),
+clarifications (&ldquo;Which room would you like that in?&rdquo;), errors, and greetings. These should be
+<strong>pre-synthesised per property voice per language and cached as Opus on the device itself</strong>, not fetched
+per turn.</p>
+<ul>
+  <li><strong>Latency:</strong> the acknowledgement plays in &lt;20&nbsp;ms instead of ~300&nbsp;ms &mdash; and it is the
+  acknowledgement, not the answer, that determines whether the device feels fast.</li>
+  <li><strong>Cost:</strong> plausibly 30&ndash;45% of TTS characters eliminated.</li>
+  <li><strong>Resilience:</strong> the device can still speak when the TTS vendor is down.</li>
+</ul>
+<p>Implementation: a versioned phrase pack per <code>(property_voice, language)</code>, pushed to devices on
+provisioning and on voice-config change, with numeric slot substitution handled by a small set of pre-synthesised
+number fragments for the most common cases (temperatures 16&ndash;30, times, small integers).</p>
+
+<h2>18. Cascaded vs speech-to-speech (Gemini Live)</h2>
+
+<p>Gemini's Live API accepts audio and emits audio natively, removing two hops. It is genuinely faster and the prosody
+is better. It is also the wrong primary architecture for this product, for reasons that are about governance rather
+than capability.</p>
+
+<table>
+  <thead><tr><th style="width:22%">Dimension</th><th style="width:39%">Cascaded (ASR&rarr;LLM&rarr;TTS)</th><th style="width:39%">Native speech-to-speech</th></tr></thead>
+  <tbody>
+    <tr><td>Latency</td><td>~1.0&ndash;2.4&nbsp;s to first audio</td><td>~0.5&ndash;1.0&nbsp;s &mdash; clearly better</td></tr>
+    <tr><td><strong>Intermediate text</strong></td><td>Transcript and response text exist as first-class artefacts</td><td><strong>May not exist reliably</strong> &mdash; and everything below depends on it</td></tr>
+    <tr><td>Audit trail</td><td>Exact text of what was heard and said, per turn</td><td>Reconstructed, approximate, or absent &mdash; unacceptable for a system that spends money and moves hardware</td></tr>
+    <tr><td>PII redaction before the model</td><td>Possible &mdash; redact the transcript</td><td>Not possible &mdash; raw audio goes to the model</td></tr>
+    <tr><td>Safety filtering</td><td>Filter text in and out</td><td>Much harder</td></tr>
+    <tr><td>Evaluation</td><td>Text-in/text-out evals are cheap and deterministic</td><td>Audio evals are expensive and noisy</td></tr>
+    <tr><td>Vendor lock-in</td><td>Three swappable components</td><td>One vendor owns the entire interaction</td></tr>
+    <tr><td>Cost</td><td>ASR + tokens + TTS, each individually optimisable</td><td>Audio tokens, materially more expensive per turn</td></tr>
+    <tr><td>Brand voice</td><td>Any TTS vendor, any cloned voice</td><td>Constrained to the provider's voices</td></tr>
+    <tr><td>Barge-in</td><td>Implemented by you</td><td>Native and excellent</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D2 &mdash; Pipeline shape</div>
+  <p><strong>Cascaded is the production path.</strong> The intermediate transcript is not an implementation detail &mdash;
+  it is the artefact that the audit trail, the redaction pipeline, the eval harness and the safety filters are all built
+  on. Trading it for ~700&nbsp;ms is a bad trade when &sect;20.4 recovers most of that perceived latency for free.</p>
+  <p><strong>But build a Live-API lane behind a per-property feature flag</strong>, restricted to a defined
+  <em>conversational</em> subset &mdash; small talk, local recommendations, property information &mdash; where no
+  T2+ action can be taken. Route to it only when the router classifies the turn as chat rather than task. This gives you
+  the best-in-class feel where it is safe, the auditable pipeline where it matters, and real operational data on the
+  Live API before you ever consider promoting it.</p>
+</div>
+
+<h2>19. Device&harr;cloud transport</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">Option</th><th style="width:44%">Assessment in a hotel environment</th><th style="width:42%">Verdict</th></tr></thead>
+  <tbody>
+    <tr><td><strong>WebSocket over TLS (443)</strong></td><td>Traverses hotel firewalls and proxies reliably because it looks like HTTPS. Bidirectional, low overhead, trivially multiplexes audio frames and JSON control messages. Mature libraries everywhere including Android.</td><td><strong>Chosen.</strong> The only option that survives real hotel networks without negotiation.</td></tr>
+    <tr><td>WebRTC</td><td>Superior media handling &mdash; jitter buffer, adaptive bitrate, native AEC, packet loss concealment. But: STUN/TURN infrastructure, ICE negotiation, UDP that hotel networks frequently block, and far more moving parts.</td><td>Rejected as primary. Reconsider only if packet loss on real properties proves unmanageable &mdash; measure before assuming.</td></tr>
+    <tr><td>gRPC bidirectional streaming</td><td>Clean typed contract (and already in the codebase for Google STT). But HTTP/2 is more often broken by intercepting middleboxes than WebSocket, and browser/proxy compatibility is worse.</td><td>Use for <em>service-to-service</em> internally. Not for device&harr;cloud.</td></tr>
+    <tr><td>MQTT</td><td>Excellent for telemetry and command/control &mdash; low overhead, QoS levels, retained messages, native to AWS IoT Core. Poor for continuous audio streaming.</td><td><strong>Complementary.</strong> Use MQTT for device telemetry, health, state reporting and OTA signalling on a <em>separate</em> channel; keep audio on the WebSocket.</td></tr>
+  </tbody>
+</table>
+
+<div class="box spec">
+  <div class="bt">Decision D5 &mdash; Transport specification</div>
+  <table class="tight" style="margin:0">
+    <tr><td style="width:32%"><strong>Audio channel</strong></td><td>WebSocket over TLS 1.3, port 443, mTLS with per-device X.509 client certificate</td></tr>
+    <tr><td><strong>Codec</strong></td><td>Opus, 16&nbsp;kHz mono, 20&nbsp;ms frames, ~16&nbsp;kbps VBR, DTX enabled</td></tr>
+    <tr><td><strong>Framing</strong></td><td>Binary frames = audio; text frames = JSON control (<code>turn.start</code>, <code>turn.end</code>, <code>barge_in</code>, <code>ack</code>, <code>screen.update</code>, <code>health</code>)</td></tr>
+    <tr><td><strong>Connection</strong></td><td>One persistent connection per device, kept warm. Establishing TLS per turn would add 200&ndash;400&nbsp;ms to every interaction &mdash; this is why it is persistent.</td></tr>
+    <tr><td><strong>Keepalive</strong></td><td>WS ping every 30&nbsp;s; server closes at 90&nbsp;s of silence</td></tr>
+    <tr><td><strong>Reconnect</strong></td><td>Exponential backoff with full jitter, 1&nbsp;s &rarr; 60&nbsp;s cap. <strong>Jitter is mandatory</strong> &mdash; without it, a property-wide network blip becomes a synchronised reconnect storm from 300 devices.</td></tr>
+    <tr><td><strong>Resume</strong></td><td>Session token allows resuming an in-flight turn within 10&nbsp;s of a drop</td></tr>
+    <tr><td><strong>Telemetry channel</strong></td><td>MQTT over TLS to AWS IoT Core: health, state, wake-word FA counters, OTA status. Deliberately separate so telemetry backpressure can never affect the voice path.</td></tr>
+    <tr><td><strong>Backpressure</strong></td><td>Server-signalled; device drops to a lower bitrate before it drops frames, and never buffers more than 2&nbsp;s of audio</td></tr>
+  </table>
+</div>
+
+<h2>20. Latency budget</h2>
+
+<p>This table is the contract the whole voice path is built against. If a component exceeds its allocation, it is a bug,
+not a tuning opportunity.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:34%">Stage</th><th style="width:11%">p50</th><th style="width:11%">p95</th><th style="width:44%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Wake word detection &rarr; capture start</td><td class="num">30 ms</td><td class="num">60 ms</td><td>On-device. Earcon fires here.</td></tr>
+    <tr><td><em>Guest speaks</em></td><td class="num">&mdash;</td><td class="num">&mdash;</td><td>Typically 1.5&ndash;4&nbsp;s; ASR runs concurrently, so this is not in the budget</td></tr>
+    <tr><td>Endpoint detection (device)</td><td class="num">300 ms</td><td class="num">450 ms</td><td>Adaptive trailing-silence threshold. Tunable per property; this is the biggest UX/accuracy trade-off knob.</td></tr>
+    <tr><td>Final audio frames &rarr; cloud</td><td class="num">35 ms</td><td class="num">120 ms</td><td>Hotel Wi-Fi to regional AWS. Assumes an in-region cell.</td></tr>
+    <tr><td>ASR finalisation</td><td class="num">140 ms</td><td class="num">300 ms</td><td>Only the tail &mdash; interim results already streamed</td></tr>
+    <tr><td>Redaction + routing</td><td class="num">8 ms</td><td class="num">20 ms</td><td>Local computation</td></tr>
+    <tr><td><strong>&mdash; FAST LANE branch &mdash;</strong></td><td class="num"></td><td class="num"></td><td></td></tr>
+    <tr><td>Fast-path match + PDP</td><td class="num">10 ms</td><td class="num">25 ms</td><td>No LLM call at all</td></tr>
+    <tr><td>Tool exec (cached-state action)</td><td class="num">180 ms</td><td class="num">600 ms</td><td>Via edge gateway to BMS</td></tr>
+    <tr><td>TTS first byte (cached phrase)</td><td class="num">15 ms</td><td class="num">30 ms</td><td>Phrase pack on device</td></tr>
+    <tr class="total"><td><strong>FAST LANE TOTAL (end of speech &rarr; first audio)</strong></td><td class="num"><strong>~590 ms</strong></td><td class="num"><strong>~1,320 ms</strong></td><td>Covers roughly 55&ndash;65% of turns</td></tr>
+    <tr><td><strong>&mdash; AGENTIC LANE branch &mdash;</strong></td><td class="num"></td><td class="num"></td><td></td></tr>
+    <tr><td>Context assembly</td><td class="num">25 ms</td><td class="num">70 ms</td><td>State pre-fetched in parallel (&sect;27.2)</td></tr>
+    <tr><td>Gemini Flash first token</td><td class="num">380 ms</td><td class="num">850 ms</td><td>Cross-cloud AWS&rarr;Vertex; measure per region (&sect;76)</td></tr>
+    <tr><td>Gemini complete tool proposal</td><td class="num">180 ms</td><td class="num">450 ms</td><td>Structured output</td></tr>
+    <tr><td>PDP evaluation</td><td class="num">3 ms</td><td class="num">8 ms</td><td>Hard budget &mdash; must never be a network call to a cold service</td></tr>
+    <tr><td>MCP gateway + tool execution</td><td class="num">220 ms</td><td class="num">750 ms</td><td>Dominated by the vendor head-end</td></tr>
+    <tr><td>Response composition (2nd LLM pass)</td><td class="num">300 ms</td><td class="num">700 ms</td><td>Avoidable for many turns via templated confirmations</td></tr>
+    <tr><td>TTS first byte (synthesised)</td><td class="num">220 ms</td><td class="num">420 ms</td><td>Streaming</td></tr>
+    <tr><td>Network back to device + buffer</td><td class="num">45 ms</td><td class="num">140 ms</td><td></td></tr>
+    <tr class="total"><td><strong>AGENTIC LANE TOTAL</strong></td><td class="num"><strong>~1,900 ms</strong></td><td class="num"><strong>~4,300 ms</strong></td><td>Unacceptable as raw numbers &mdash; see below</td></tr>
+    <tr class="total"><td><strong>PERCEIVED latency (with filled pause)</strong></td><td class="num"><strong>~600 ms</strong></td><td class="num"><strong>~900 ms</strong></td><td>Because the guest hears a response at the acknowledgement, not the answer</td></tr>
+  </tbody>
+</table>
+
+<h3>20.4 Why perceived latency is the only number that matters</h3>
+<p>The agentic lane's p95 of 4.3 seconds would be a product-killing figure if the guest experienced it as silence. They
+do not, because the orchestrator emits a <strong>filled pause from the device's cached phrase pack the moment the router
+selects the agentic lane</strong> &mdash; before the LLM has even responded. The guest hears &ldquo;Sure, one
+moment&mdash;&rdquo; at ~600&nbsp;ms and then the substantive answer flows in behind it.</p>
+
+<p>This is not a trick; it is how humans handle the same problem. Three rules make it work:</p>
+<ul>
+  <li><strong>Vary the phrase.</strong> Rotate through 6&ndash;8 acknowledgements per language. A device that says exactly
+  the same three words every time sounds broken within a day.</li>
+  <li><strong>Only fill when you will be slow.</strong> Fast-lane turns must never get a filled pause &mdash; it makes a
+  600&nbsp;ms interaction feel slower, not faster.</li>
+  <li><strong>Never acknowledge an outcome you have not achieved.</strong> &ldquo;One moment&rdquo; is honest;
+  &ldquo;Done!&rdquo; before the BMS has acked is a lie the guest will catch when the lights do not change.</li>
+</ul>
+
+<h2>21. Device software architecture</h2>
+
+<pre class="ascii">
+┌──────────────────────────── WOOHOO HUB (Android, com.sb.woohoo) ─────────────────────────────────┐
+│                                                                                                  │
+│  AUDIO IN                                                                                        │
+│   Mic array ─► AEC (ref = playback) ─► Beamform/NS ─► ┬─► WakeWordEngine (Sensory THF)           │
+│                                                       │      └─ 500ms circular pre-roll buffer   │
+│                                                       └─► VAD ─► Endpointer ─► Opus encoder ──┐  │
+│                                                                                               │  │
+│  TRANSPORT                                                                                    ▼  │
+│   ConnectionManager: persistent WSS + mTLS (cert in Android Keystore / StrongBox)                │
+│     ├─ audio frames out (binary)          ├─ control JSON in/out                                 │
+│     ├─ reconnect w/ jittered backoff      └─ MQTT telemetry channel (separate)                   │
+│                                                                                                  │
+│  AUDIO OUT                                                                                       │
+│   ◄─ Opus decode ─► jitter buffer ─► mixer ─► speaker     PhraseCache (pre-synth Opus, versioned)│
+│   BargeInController: on VAD-during-playback → duck, then stop, then send barge_in control        │
+│                                                                                                  │
+│  STATE &amp; UI                                                                                      │
+│   ScreenStateMachine  (idle / listening / thinking / speaking / confirming / offline / muted)    │
+│   Server-driven screen content — device renders, never decides                                   │
+│                                                                                                  │
+│  RESILIENCE                                                                                      │
+│   OfflineController: local grammar (~25 phrases) → LocalActionBridge → Edge Gateway (LAN)        │
+│   HealthReporter · CrashRecovery · WatchdogService · NTP sync                                    │
+│                                                                                                  │
+│  LIFECYCLE                                                                                       │
+│   ProvisioningFlow (QR/ZXing → CSR → signed cert)  ·  OTAAgent (signed, A/B, anti-rollback)      │
+│   PrivacyController (hard mic mute → cuts the mic at the driver, drives the LED)                 │
+│                                                                                                  │
+│  FEATURE MODULES (existing, retained)                                                            │
+│   F&amp;B UI · Twilio video call · Spotify remote · Bluetooth · smiley feedback rating               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<h3>21.1 What must change on the device</h3>
+<table class="tight">
+  <thead><tr><th style="width:26%">Change</th><th style="width:42%">Why</th><th style="width:32%">Effort / risk</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Remove all cloud credentials</strong> &mdash; <code>google-services.json</code> service-account path, Polly SDK keys</td><td>A stolen device must yield nothing but a revocable, room-scoped certificate. This is the finding that fails a chain security review.</td><td>Medium. Highest-priority change.</td></tr>
+    <tr><td><strong>Replace direct Google STT gRPC with the Woohoo WebSocket</strong></td><td>Puts the ASR vendor behind an abstraction; lets you change vendors, models and phrase hints without an OTA; removes credentials.</td><td>Medium. The core refactor.</td></tr>
+    <tr><td><strong>Move TTS server-side; add the phrase cache</strong></td><td>Per-property brand voices, multilingual, no per-device credentials, and better latency for the common phrases.</td><td>Medium-low.</td></tr>
+    <tr><td><strong>Add device-side endpointing with an explicit end-of-turn signal</strong></td><td>Saves 200&ndash;400&nbsp;ms per turn (&sect;15.1).</td><td>Medium &mdash; needs real tuning on real hardware.</td></tr>
+    <tr><td><strong>X.509 identity in hardware keystore + CSR-based provisioning</strong></td><td>Per-device revocable identity, bound to the room.</td><td>Medium-high; touches the provisioning flow.</td></tr>
+    <tr><td><strong>Barge-in support</strong></td><td>Interrupting a talkative assistant is the single most-requested behaviour in voice UX.</td><td>Medium; depends on AEC quality.</td></tr>
+    <tr><td><strong>Offline controller + local grammar</strong></td><td>Hotel WANs fail. The device must still dim the lights.</td><td>Medium.</td></tr>
+    <tr><td><strong>Hard mic mute cutting the mic in the driver, with LED</strong></td><td>Compliance and guest trust. A software mute is not a mute.</td><td>Low-medium; may need hardware support.</td></tr>
+    <tr><td>Replace socket.io with the unified WS control channel</td><td>One connection, one auth model, one reconnect strategy.</td><td>Low-medium.</td></tr>
+    <tr><td>Modernise: Kotlin, coroutines, current AGP, remove Fabric</td><td>Hygiene. Not urgent, but the Java/Dagger/MVP stack from 2019 will slow every subsequent change.</td><td>Ongoing.</td></tr>
+  </tbody>
+</table>
+
+<h2>22. Hotel network reality</h2>
+
+<p>Hotel networks are the most hostile environment this system will run in, and the failure modes are consistent enough
+to design for specifically.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">What actually happens</th><th style="width:36%">Effect</th><th style="width:38%">Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Devices put on guest Wi-Fi</strong></td><td>Captive portal intercepts, client isolation blocks LAN access to the edge gateway, bandwidth shaping, session timeouts</td><td><strong>Contractual requirement: dedicated IoT VLAN, wired where possible.</strong> Make this a precondition of installation, not a request afterwards. Detect and alarm if a device appears on a guest subnet.</td></tr>
+    <tr><td>AP density designed for phones, not 300 always-connected devices</td><td>Association failures, high retry rates, roaming problems in corridors</td><td>Site survey during onboarding; per-device RSSI telemetry with a &ldquo;this room has poor coverage&rdquo; report for the hotel</td></tr>
+    <tr><td>The BMS is on an isolated network with no route to the internet</td><td>Cloud cannot reach the head-end at all</td><td><strong>The Edge Gateway (&sect;40).</strong> This is the primary reason it exists.</td></tr>
+    <tr><td>Hotel IT will not open inbound ports and will not sign off on a site-to-site VPN quickly</td><td>Integration stalls for months</td><td>Outbound-only architecture, single 443 egress. Make the firewall ask a one-line request.</td></tr>
+    <tr><td>Deep packet inspection / TLS interception on the corporate network</td><td>mTLS breaks; cert pinning breaks</td><td>Document required allowlist domains; detect interception and report it clearly rather than failing opaquely</td></tr>
+    <tr><td>WAN outages, often at night when maintenance runs</td><td>Whole property loses voice control</td><td>Edge local fallback + on-device grammar; optionally cellular failover on the edge appliance for large properties</td></tr>
+    <tr><td>Renovation and room reassignment without telling anyone</td><td>Device in room 412 is now in 414; commands go to the wrong room &mdash; a serious safety and privacy bug</td><td><strong>Room-binding verification:</strong> periodic correlation of device identity with the automation system's own room identifier, plus an alert when they disagree. Never trust the last-known mapping silently.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The most under-appreciated risk in this list</div>
+  <p><strong>Device-to-room mis-binding.</strong> If a device is moved during a refurbishment and the catalogue is not
+  updated, a guest in 414 will control the lights in 412 &mdash; and the audit log will confidently record it as correct.
+  This is both a guest-safety issue and a privacy issue, and it will not surface as an error anywhere unless you build
+  detection for it. Treat room binding as a continuously verified fact, not a provisioning-time fact.</p>
+</div>

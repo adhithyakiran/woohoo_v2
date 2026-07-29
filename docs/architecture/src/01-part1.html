@@ -1,0 +1,182 @@
+<!-- ================= PART I ================= -->
+<h1 class="part"><span class="pn">Part I</span>Context &amp; Executive Summary</h1>
+
+<h2>1. What Woohoo is, and what breaks today</h2>
+
+<p>Woohoo is an in-room voice assistant for hotels. A guest says <em>&ldquo;Hello Voice Genie&rdquo;</em> and then asks for
+something &mdash; dim the lights, set the temperature, send housekeeping, order a club sandwich, when is checkout,
+what's the Wi-Fi password. The device is an Android hub with a screen (<code>com.sb.woohoo</code>), deployed one per
+guest room, and it fronts whichever building-automation system that particular property runs &mdash; Honeywell INNCOM,
+Interel, or another &mdash; plus the hotel's service and F&amp;B operations.</p>
+
+<p>The V1 system is a Dialogflow application. The device performs wake-word detection locally with the Sensory
+TrulyHandsfree SDK, opens a gRPC stream to Google for speech recognition, receives a matched intent with parameters,
+and the backend maps that intent onto an API call. Text-to-speech is synthesised on the device using AWS Polly. There
+is a socket.io channel to the backend for push, Twilio for video calling, Spotify for music, and QR-code enrolment for
+device provisioning.</p>
+
+<p>That design has four structural problems, and they are the reason V2 exists.</p>
+
+<h3>1.1 Intent matching cannot represent what guests actually say</h3>
+<p>Dialogflow's model is: one utterance &rarr; one intent &rarr; a fixed parameter set &rarr; one action. Guests do not
+speak that way. <em>&ldquo;It's freezing in here and can you get someone to look at the shower, it's dripping&rdquo;</em> is
+two intents, one of which is a service ticket with a free-text description that no entity extractor was designed to
+produce. <em>&ldquo;Make it a bit warmer&rdquo;</em> requires reading the current setpoint before deciding the target &mdash;
+Dialogflow has no notion of reading state before acting. <em>&ldquo;Same as yesterday&rdquo;</em> requires memory. Every one of
+these becomes a fallback intent, and fallback rate is the single number that determines whether guests keep using the
+device after day one.</p>
+
+<h3>1.2 Every new hotel is an integration project, not a configuration change</h3>
+<p>Because intents are wired to concrete API calls, a property running Interel needs a different intent-to-action
+mapping than one running INNCOM, and a property without motorised curtains needs the curtain intents disabled. In V1
+that difference lives in code and in branching. This is the reason onboarding a property takes weeks. It is also the
+reason the system cannot be sold as a product with a price per room &mdash; the marginal cost of a customer is
+engineering time.</p>
+
+<h3>1.3 The device holds credentials and makes cloud decisions</h3>
+<p>The V1 device ships with <code>google-services.json</code>, a Google service-account auth path
+(<code>google-auth-library-oauth2-http</code>), and AWS Polly SDK credentials. A device physically stolen from a hotel
+room &mdash; which happens &mdash; is a credential compromise, and the credential is not scoped to that room. This is the
+finding that will fail the first serious hotel-chain security review.</p>
+
+<h3>1.4 There is no audit trail of <em>why</em> the system did something</h3>
+<p>When a guest complains that the lights turned off during their shower, or that a $180 room-service order appeared on
+their folio, V1 can show that an API was called. It cannot show what was heard, what was inferred, what state was read,
+what was decided and on whose authority. For an agentic system that takes physical actions and spends money, that trail
+is not optional &mdash; it is the product's licence to operate.</p>
+
+<h2>2. What actually changes in V2</h2>
+
+<table>
+  <thead><tr><th style="width:17%">Dimension</th><th style="width:33%">V1 (Dialogflow)</th><th style="width:33%">V2 (Agentic)</th><th style="width:17%">Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Understanding</strong></td><td>Intent classification with fixed slots</td><td>Gemini reasoning over a tool surface, multi-intent, multi-turn, with state read before action</td><td>Fallback rate collapses; compound requests work</td></tr>
+    <tr><td><strong>Action binding</strong></td><td>Intent hard-wired to a vendor API</td><td>Abstract capability tools; a per-property adapter resolves them to the vendor</td><td>New property = config, not code</td></tr>
+    <tr><td><strong>State</strong></td><td>Write-only, fire and forget</td><td>Read current state &rarr; reason &rarr; act &rarr; verify &rarr; confirm</td><td>&ldquo;Make it warmer&rdquo; works; failed actions are detected</td></tr>
+    <tr><td><strong>Data access</strong></td><td>Bespoke REST per feature</td><td>MCP servers behind a governed gateway</td><td>One integration contract; tenant scoping enforced centrally</td></tr>
+    <tr><td><strong>Device role</strong></td><td>Smart client with cloud credentials, does STT and TTS itself</td><td>Thin, credential-less audio endpoint with a per-device X.509 identity</td><td>Theft is contained; pipeline is upgradable without an OTA</td></tr>
+    <tr><td><strong>Authority</strong></td><td>Implicit &mdash; whatever the intent was wired to</td><td>Explicit policy engine outside the model, with risk tiers and confirmation rules</td><td>The model cannot be talked into an action policy forbids</td></tr>
+    <tr><td><strong>Evidence</strong></td><td>API access logs</td><td>Immutable per-turn decision record: transcript, context, reasoning summary, tool calls, policy verdicts, outcome</td><td>Dispute resolution, incident response, regulatory defence</td></tr>
+    <tr><td><strong>Deployability</strong></td><td>One environment</td><td>Docker Compose for pilots and on-prem &rarr; AWS multi-tenant production, same artefacts</td><td>Pilot velocity without a rewrite</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">The reframing that matters most</div>
+  <p>V1 asked <em>&ldquo;which of my known intents is this?&rdquo;</em> V2 asks <em>&ldquo;what does this guest want, what am I
+  permitted to do about it in this room, and what is the current state of the world?&rdquo;</em> The second question is
+  answerable by a model. The first never was.</p>
+  <p>But the corollary is the whole reason this document is long: once the system can decide, <strong>everything the
+  system is not allowed to decide must be enforced outside the model</strong>. Roughly two-thirds of this architecture is
+  that enforcement.</p>
+</div>
+
+<h2>3. Executive summary of the target design</h2>
+
+<p>Woohoo V2 is a <strong>multi-tenant, event-backed agentic platform</strong> with a thin edge, a governed tool plane,
+and a policy layer that sits between the model's intent and the physical world.</p>
+
+<h3>3.1 The shape in one paragraph</h3>
+<p>The device does wake-word detection, voice activity detection, acoustic echo cancellation and endpointing locally,
+then streams Opus audio over a single authenticated WebSocket to a <strong>Device Gateway</strong>. The gateway
+terminates device identity, resolves <code>device_id &rarr; tenant / property / room</code>, and hands the session to a
+<strong>Session Orchestrator</strong> that owns the turn. The orchestrator streams audio to a cloud
+<strong>ASR</strong> provider, and the resulting transcript enters a <strong>three-lane router</strong>: a deterministic
+fast lane for the ~60% of utterances that are high-frequency and unambiguous, an agentic lane on Gemini for everything
+else, and a clarification lane when confidence is low. The agent reasons over a <strong>capability-shaped tool
+surface</strong> served by an internal <strong>MCP Gateway</strong>, which fans out to the property catalogue, device
+state, service/ticketing, F&amp;B, PMS and knowledge MCP servers. Every tool call the agent proposes passes through a
+<strong>Policy Decision Point</strong> that checks tenancy scope, risk tier, quiet hours, spend limits and consent
+before it is allowed to execute. Execution reaches physical devices through a per-vendor
+<strong>Automation Adapter</strong>, which in most properties runs partly on an <strong>on-premise Edge Gateway</strong>
+because INNCOM and Interel are LAN-resident systems. The spoken reply is synthesised by streaming TTS and returned over
+the same WebSocket. Every step emits a span into a per-turn trace and an immutable record into the audit store.</p>
+
+<h3>3.2 The eight decisions that define the system</h3>
+<table class="tight">
+  <thead><tr><th style="width:4%">#</th><th style="width:26%">Decision</th><th style="width:46%">Choice</th><th style="width:24%">Principal alternative rejected</th></tr></thead>
+  <tbody>
+    <tr><td>D1</td><td>STT location</td><td><strong>Cloud streaming ASR</strong>, with wake word, VAD, AEC and endpointing on device</td><td>Full on-device ASR &mdash; fails on accent breadth and hotel-specific vocabulary at acceptable hardware cost</td></tr>
+    <tr><td>D2</td><td>Pipeline shape</td><td><strong>Cascaded</strong> ASR &rarr; agent &rarr; TTS, with a Gemini Live pilot behind a flag</td><td>Native speech-to-speech as the primary path &mdash; loses the intermediate text that safety, audit and evals depend on</td></tr>
+    <tr><td>D3</td><td>Orchestration</td><td><strong>Three-lane router</strong>: deterministic fast path, agentic path, clarify path</td><td>Pure single ReAct agent &mdash; too slow and too expensive for &ldquo;turn on the lights&rdquo;</td></tr>
+    <tr><td>D4</td><td>Service granularity</td><td><strong>Modular monolith with four carve-outs</strong> at Phase&nbsp;1; documented split triggers</td><td>Full microservices on day one &mdash; buys distributed-systems cost before there is scale to justify it</td></tr>
+    <tr><td>D5</td><td>Tool plane</td><td><strong>Internal MCP Gateway</strong>; agent never speaks to a downstream MCP server directly</td><td>Agent holding N direct MCP connections &mdash; no central scoping, no tenant enforcement, no uniform audit</td></tr>
+    <tr><td>D6</td><td>Authority</td><td><strong>Policy Decision Point outside the model</strong>; risk tiers T0&ndash;T4; scope injected server-side, never from model output</td><td>Prompt-level guardrails as the primary control &mdash; a prompt is a request, not a boundary</td></tr>
+    <tr><td>D7</td><td>Property connectivity</td><td><strong>On-prem Edge Gateway per property</strong>, outbound-only, with local automation fallback</td><td>Direct cloud&rarr;BMS connectivity &mdash; not reachable, and hotel IT will not open inbound ports</td></tr>
+    <tr><td>D8</td><td>Data posture</td><td><strong>Ephemeral by default</strong> &mdash; no raw audio retention, redacted transcripts, tokenised guest identity, zero-retention LLM/ASR contracts</td><td>Retain-everything-for-analytics &mdash; creates a consent and residency problem that hotels will not underwrite</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 What this buys, in numbers</h3>
+<table class="tight">
+  <thead><tr><th style="width:34%">Target</th><th style="width:22%">V2 goal</th><th>Basis</th></tr></thead>
+  <tbody>
+    <tr><td>Wake&rarr;first audio response, p50</td><td><strong>&le; 1,100&nbsp;ms</strong></td><td>Fast lane; see the latency budget in &sect;20</td></tr>
+    <tr><td>Wake&rarr;first audio response, p95</td><td><strong>&le; 2,400&nbsp;ms</strong></td><td>Agentic lane with one tool round-trip</td></tr>
+    <tr><td>Task success rate (top-50 intents)</td><td><strong>&ge; 95%</strong></td><td>Measured by the eval harness in &sect;72</td></tr>
+    <tr><td>Containment (resolved without staff)</td><td><strong>&ge; 80%</strong></td><td>Excludes intentional escalations</td></tr>
+    <tr><td>New property onboarding</td><td><strong>&le; 5 working days</strong> for a 300-room property</td><td>Config-driven; &sect;12 and Appendix&nbsp;C</td></tr>
+    <tr><td>Cost per room per month at 10k devices</td><td><strong>&lt; $1.10&nbsp;</strong>&dagger; all-in cloud+AI</td><td>Cost model in &sect;65</td></tr>
+    <tr><td>Unsafe-action rate (T3+ executed without required confirmation)</td><td><strong>0</strong> &mdash; enforced structurally</td><td>PDP is in the execution path, not advisory</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Decision register</h2>
+<p>The complete set of architectural decisions, each with its section reference. This table is the review surface &mdash;
+challenge rows here.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:5%">ID</th><th style="width:22%">Area</th><th style="width:47%">Decision</th><th style="width:9%">&sect;</th><th style="width:17%">Reversibility</th></tr></thead>
+  <tbody>
+    <tr><td>D1</td><td>ASR placement</td><td>Cloud streaming ASR; device does wake/VAD/AEC/endpoint only</td><td>15</td><td>Medium &mdash; hybrid path pre-planned</td></tr>
+    <tr><td>D2</td><td>Pipeline</td><td>Cascaded STT&rarr;LLM&rarr;TTS; Live API behind a per-property flag</td><td>18</td><td>High &mdash; flag-gated</td></tr>
+    <tr><td>D3</td><td>ASR vendor</td><td>Primary Deepgram Nova-3 or Google STT v2 (chirp_2); dual-vendor abstraction from day one</td><td>16</td><td>High &mdash; adapter interface</td></tr>
+    <tr><td>D4</td><td>TTS vendor</td><td>Google Chirp3-HD or Amazon Polly Generative primary; cached earcons and canned phrases</td><td>17</td><td>High</td></tr>
+    <tr><td>D5</td><td>Transport</td><td>Single WebSocket per device, Opus 16&nbsp;kHz 20&nbsp;ms frames, mTLS, exponential reconnect</td><td>19</td><td>Low &mdash; device firmware</td></tr>
+    <tr><td>D6</td><td>Wake word</td><td>Keep Sensory THF; abstract behind a <code>WakeWordEngine</code> interface; evaluate Picovoice as second source</td><td>14</td><td>Medium</td></tr>
+    <tr><td>D7</td><td>Orchestration</td><td>Three-lane router (fast / agentic / clarify)</td><td>24</td><td>High</td></tr>
+    <tr><td>D8</td><td>LLM</td><td>Gemini 2.5 Flash default; Flash-Lite for classification; Pro for offline eval and complex escalation only</td><td>25</td><td>High</td></tr>
+    <tr><td>D9</td><td>Tool plane</td><td>Internal MCP Gateway; downstream MCP servers never exposed to the agent directly</td><td>30</td><td>Medium</td></tr>
+    <tr><td>D10</td><td>Capability model</td><td>Abstract capability tools + per-property capability manifest; vendor differences never reach the model</td><td>33</td><td>Low &mdash; core abstraction</td></tr>
+    <tr><td>D11</td><td>Authority</td><td>PDP with T0&ndash;T4 risk tiers, evaluated on every proposed tool call</td><td>44</td><td>Low &mdash; core abstraction</td></tr>
+    <tr><td>D12</td><td>Scoping</td><td>Tenant/property/room scope injected server-side from the device identity; model output can never widen it</td><td>45</td><td>Low</td></tr>
+    <tr><td>D13</td><td>Decomposition</td><td>Modular monolith + Device Gateway + Edge Gateway + Adapters carved out; split triggers documented</td><td>10&ndash;12</td><td>High &mdash; that is the point</td></tr>
+    <tr><td>D14</td><td>Property connectivity</td><td>On-prem Edge Gateway, outbound-only mTLS tunnel, local fallback automation</td><td>40</td><td>Low</td></tr>
+    <tr><td>D15</td><td>Session state</td><td>Redis (ElastiCache) with 30-minute TTL; nothing durable in session store</td><td>28</td><td>High</td></tr>
+    <tr><td>D16</td><td>Catalogue store</td><td>PostgreSQL (Aurora Serverless v2) with row-level security by tenant</td><td>36</td><td>Medium</td></tr>
+    <tr><td>D17</td><td>Event backbone</td><td>Phase&nbsp;1 Redis Streams / NATS; Phase&nbsp;2 EventBridge + SQS; Kinesis only for telemetry firehose</td><td>38</td><td>Medium</td></tr>
+    <tr><td>D18</td><td>Audit store</td><td>S3 with Object Lock (WORM) + OpenSearch index; per-tenant KMS keys</td><td>57</td><td>Low</td></tr>
+    <tr><td>D19</td><td>Compute</td><td>ECS Fargate for stateless; EKS only if/when the fleet justifies it; no Lambda on the voice path</td><td>75</td><td>Medium</td></tr>
+    <tr><td>D20</td><td>Cross-cloud</td><td>Agent runtime on AWS calling Vertex AI over the internet with WIF; regional Vertex endpoints; measured, not assumed</td><td>76</td><td>Medium</td></tr>
+    <tr><td>D21</td><td>Data posture</td><td>Ephemeral by default; no raw audio at rest; PII redaction before LLM; zero-retention contracts</td><td>57</td><td>Low</td></tr>
+    <tr><td>D22</td><td>Consent</td><td>Hotel is controller, Woohoo is processor; notice at check-in + in-room + device-level; hard mic mute</td><td>55&ndash;56</td><td>Low</td></tr>
+    <tr><td>D23</td><td>Residency</td><td>Regional cells: <code>eu</code>, <code>in</code>, <code>me</code>, <code>us</code>; no cross-cell guest data movement</td><td>58</td><td>Low</td></tr>
+    <tr><td>D24</td><td>Payments</td><td>Woohoo never touches PAN; folio posting via PMS only; PCI scope reduced to SAQ-A-equivalent</td><td>60</td><td>Low</td></tr>
+    <tr><td>D25</td><td>Door locks</td><td>No lock actuation capability exists in the tool surface, at any tier, in V2</td><td>44</td><td>Deliberately hard to reverse</td></tr>
+    <tr><td>D26</td><td>Emergency</td><td>Device is never presented as an emergency channel; distress detection routes to staff and states its limits aloud</td><td>48</td><td>Low</td></tr>
+    <tr><td>D27</td><td>Prompt release</td><td>Prompts, tool schemas and model IDs are versioned deploy artefacts with staged rollout and one-click rollback</td><td>77</td><td>High</td></tr>
+    <tr><td>D28</td><td>IaC</td><td>Terraform; one module per environment cell; no console changes in production</td><td>75</td><td>Medium</td></tr>
+    <tr><td>D29</td><td>Repo</td><td>Monorepo with independently buildable service targets</td><td>App.&nbsp;D</td><td>High</td></tr>
+    <tr><td>D30</td><td>Evals</td><td>Golden + adversarial suites gate every prompt/model/tool change in CI; no manual &ldquo;looks fine&rdquo; releases</td><td>72</td><td>Low</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Principles that drive the design</h2>
+
+<div class="lyr c2">
+  <div class="nd core"><span class="t">P1 &mdash; The model proposes, the platform disposes</span><span class="d">Gemini never executes. It emits a proposed tool call; the Policy Decision Point authorises it; the executor performs it. Every constraint that must hold is code, not prose in a prompt. If a guest could talk the model into it, it was never a control.</span></div>
+  <div class="nd core"><span class="t">P2 &mdash; Scope is ambient, never argued</span><span class="d">The agent is never asked which room to act on and cannot supply one. Tenant, property and room are derived from the authenticated device identity and injected into every tool call server-side. A tool call for a room the device is not in is structurally impossible.</span></div>
+  <div class="nd core"><span class="t">P3 &mdash; Latency is a feature, not a metric</span><span class="d">A voice assistant that answers in three seconds is perceived as broken regardless of accuracy. Every design choice is evaluated against the latency budget first. This is why the fast lane exists and why the device speaks an acknowledgement before the answer is ready.</span></div>
+  <div class="nd core"><span class="t">P4 &mdash; Vendor differences stop at the adapter</span><span class="d">The agent knows about &ldquo;a thermostat in the bedroom zone with a setpoint range&rdquo;. It never knows about INNCOM or Interel. Every vendor-specific fact lives in an adapter and a per-property capability manifest.</span></div>
+  <div class="nd core"><span class="t">P5 &mdash; A new property is data</span><span class="d">Onboarding a hotel must be: load a property config, load a room/device inventory, deploy an edge gateway, run a conformance suite. If it requires a code change, the abstraction failed and the abstraction gets fixed.</span></div>
+  <div class="nd core"><span class="t">P6 &mdash; Store the decision, not the person</span><span class="d">The system retains enough to reconstruct why it acted &mdash; redacted transcript, context digest, tool calls, policy verdicts &mdash; and as little as possible about who the guest was. Raw audio is never written to disk anywhere.</span></div>
+  <div class="nd core"><span class="t">P7 &mdash; Degrade in defined steps</span><span class="d">Gemini down, ASR down, internet down, BMS down are four different failures with four defined behaviours, ending in local-only automation that still turns the lights on. The device never becomes a brick with a logo.</span></div>
+  <div class="nd core"><span class="t">P8 &mdash; Everything on the guest path is traced</span><span class="d">One trace ID from the wake word to the actuation acknowledgement, spanning device, gateway, ASR, agent, MCP, adapter and vendor API. If it is not traced, it cannot be debugged at 3&nbsp;a.m. across 500 properties.</span></div>
+</div>
+
+<div class="box decision">
+  <div class="bt">The single most important principle</div>
+  <p><strong>P1</strong>. Everything else is engineering. P1 is the difference between a product a hotel chain will install
+  in 40,000 rooms and a demo that gets pulled after the first incident. An LLM in the loop of physical actuation and
+  guest billing is only acceptable if the set of things it can cause is bounded by something that does not reason.</p>
+</div>

@@ -1,0 +1,37 @@
+{
+  "name": "woohoo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Woohoo V2 — agentic voice platform for in-room hospitality",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "tools/*",
+    "eval"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "eval": "tsx eval/runner/cli.ts",
+    "turn": "tsx tools/device-simulator/src/cli.ts",
+    "gateway": "tsx services/device-gateway/src/main.ts",
+    "core": "tsx services/woohoo-core/src/main.ts",
+    "edge": "tsx services/edge-gateway/src/main.ts",
+    "seed": "tsx tools/device-simulator/src/seed-dump.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,346 @@
+<!-- ================= APPENDICES ================= -->
+<h1 class="part"><span class="pn">Appendix A</span>Tool &amp; MCP Schemas</h1>
+
+<p>Representative schemas showing the conventions in &sect;32. Note what is <em>absent</em>: no room identifier, no
+property identifier, no vendor concepts.</p>
+
+<pre class="json">// ─────────── room.get_state ─── T0 ─── the pre-fetched read ───────────
+{
+  "name": "room.get_state",
+  "description": "Current state of every controllable device in the guest's room. Call this before any
+                  relative adjustment (warmer, dimmer, brighter). Usually already provided in context.",
+  "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "zones": { "type": "array", "items": {
+          "type": "object",
+          "properties": {
+            "zone":     { "type": "string", "enum": ["bedroom","living","bathroom","entrance"] },
+            "lighting": { "type": "object", "properties": {
+                            "on":         { "type": "boolean" },
+                            "brightness": { "type": "integer", "minimum": 0, "maximum": 100 },
+                            "available":  { "type": "boolean" } } },
+            "climate":  { "type": "object", "properties": {
+                            "current_c":  { "type": "number" },
+                            "setpoint_c": { "type": "number" },
+                            "mode":       { "type": "string", "enum": ["auto","cool","heat","fan","off"] },
+                            "min_c":      { "type": "number" },   // property-policy bounds, shown so the
+                            "max_c":      { "type": "number" },   // model proposes valid values first time
+                            "available":  { "type": "boolean" } } },
+            "curtains": { "type": "object", "properties": {
+                            "position":  { "type": "integer", "minimum": 0, "maximum": 100 },
+                            "supports_position": { "type": "boolean" },  // false ⇒ open/close only
+                            "available": { "type": "boolean" } } }
+          } } },
+      "dnd":       { "type": "string", "enum": ["off","dnd","make_up_room"] },
+      "freshness": { "type": "string", "enum": ["fresh","stale","unknown"] },  // §37 contract
+      "as_of":     { "type": "string", "format": "date-time" }
+    }
+  }
+}
+
+// ─────────── climate.set_temperature ─── T1 ─── bounds enforced by the PDP, not the schema ───────────
+{
+  "name": "climate.set_temperature",
+  "description": "Set the target temperature. Use room.get_state first for relative requests. Bounds are
+                  set by the property; a value outside them will be rejected with the permitted range.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "zone":     { "type": "string", "enum": ["bedroom","living"] },   // enum generated from the manifest
+      "target_c": { "type": "number", "minimum": 16, "maximum": 30 }
+    },
+    "required": ["zone","target_c"],
+    "additionalProperties": false          // ← model-supplied extras are rejected outright
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "status":   { "type": "string", "enum": ["applied","pending","rejected"] },
+      "observed": { "type": "object" },    // present only when status = applied (verified read, §37)
+      "message":  { "type": "string" }     // guest-safe phrasing hint on rejection
+    }
+  },
+  "x-woohoo": { "tier": "T1", "idempotent": true, "verify_read": true, "timeout_ms": 2500 }
+}
+
+// ─────────── fnb.place_order ─── T3 ─── always requires a confirmed second turn ───────────
+{
+  "name": "fnb.place_order",
+  "description": "Place a food and beverage order charged to the room folio. ALWAYS state the full total
+                  aloud and obtain explicit confirmation. Never place an order in the same turn it is
+                  first proposed.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "items": { "type": "array", "minItems": 1, "maxItems": 15, "items": {
+          "type": "object",
+          "properties": {
+            "menu_item_id": { "type": "string" },   // must come from fnb.get_menu — never invented
+            "quantity":     { "type": "integer", "minimum": 1, "maximum": 10 },
+            "notes":        { "type": "string", "maxLength": 200 }
+          },
+          "required": ["menu_item_id","quantity"] } },
+      "delivery_note": { "type": "string", "maxLength": 200 }
+    },
+    "required": ["items"],
+    "additionalProperties": false
+  },
+  "x-woohoo": {
+    "tier": "T3",
+    "requires_confirmation": true,
+    "confirmation_must_include": ["total_amount","currency","item_count"],
+    "spend_cap_applies": true,
+    "idempotent": true,
+    "retry": "never"
+  }
+}
+
+// ─────────── The standard error envelope — errors are instructions, not codes ───────────
+{
+  "error": "NOT_AVAILABLE",              // NOT_AVAILABLE | NOT_PERMITTED | TEMPORARILY_UNREACHABLE
+                                         // | NEEDS_CONFIRMATION | INVALID_ARGUMENT | RATE_LIMITED
+  "detail": "This room does not have motorised curtains.",
+  "suggestion": "Tell the guest the curtains are manual. Offer to send housekeeping if they need help.",
+  "retryable": false
+}</pre>
+
+<h1 class="part"><span class="pn">Appendix B</span>Event Schemas</h1>
+
+<pre class="json">// Every event shares this envelope. tenant_id and trace_id are mandatory — adding them later is a migration.
+{
+  "specversion": "1.0",
+  "type":        "woohoo.turn.completed",
+  "source":      "/cell/in/orchestrator",
+  "id":          "evt_01J8X...",
+  "time":        "2026-07-29T18:14:02.331Z",
+  "subject":     "turn_01J8X...",
+  "tenant_id":   "t_example_apac",
+  "property_id": "p_blr_whitefield",
+  "trace_id":    "4bf92f3577b34da6a3ce929d0e0e4736",
+  "schema_version": "1.0",
+  "data": { /* per-type payload */ }
+}
+
+// woohoo.turn.completed — the analytics and audit spine
+"data": {
+  "turn_id": "turn_01J8X...", "room_ref": "r_412", "device_id": "d_8f2a...",
+  "lane": "agentic", "language": "en-IN", "degradation_level": 0,
+  "asr": { "vendor": "deepgram", "confidence": 0.91, "audio_ms": 5820 },
+  "llm": { "model": "gemini-2.5-flash", "prompt_version": "v14",
+           "tokens_in": 5140, "tokens_cached": 4020, "tokens_out": 287, "cost_usd": 0.00163 },
+  "tool_calls": [
+    { "tool": "climate.set_temperature", "tier": "T1", "verdict": "ALLOW",  "status": "applied", "ms": 412 },
+    { "tool": "service.create_request",  "tier": "T2", "verdict": "ALLOW",  "status": "applied", "ms": 88,
+      "annotations": { "dispatch_at": "08:00" } }
+  ],
+  "latency": { "endpoint_to_first_audio_ms": 1480, "total_ms": 4402 },
+  "outcome": "success", "escalated": false, "barge_in": false
+}
+
+// woohoo.escalation.raised — must be acknowledged; alarm if it is not
+"data": {
+  "escalation_id": "esc_01J8X...", "room_ref": "r_412", "category": "medical",
+  "severity": "critical", "trigger": "distress_phrase_detected",
+  "context_summary": "Guest reported chest pain at 23:14 local.",
+  "notified": ["front_desk","duty_manager"], "requires_ack_within_s": 120
+}
+
+// woohoo.stay.checked_out — drives data deletion, so delivery is reliability-critical
+"data": { "stay_ref": "stay_tok_9f...", "room_ref": "r_412",
+          "checked_out_at": "2026-07-30T05:31:00Z",
+          "purge": ["session","stay_memory","cached_pms_context","device_personalisation"] }
+
+// woohoo.policy.denied — feeds security monitoring and the adversarial eval corpus
+"data": { "turn_id": "turn_01J8X...", "tool": "fnb.place_order", "tier": "T3",
+          "rule_id": "spend_cap_per_stay", "verdict": "DENY",
+          "reason": "stay spend cap reached", "utterance_hash": "sha256:..." }</pre>
+
+<h1 class="part"><span class="pn">Appendix C</span>Property Configuration Schema</h1>
+
+<p>This is the artefact that makes onboarding a configuration exercise. It is authored during onboarding, versioned, and
+validated by the conformance suite before go-live.</p>
+
+<pre class="json">{
+  "property_id": "p_blr_whitefield",
+  "tenant_id":   "t_example_apac",
+  "name":        "Example Hotel Whitefield",
+  "cell":        "in",
+  "timezone":    "Asia/Kolkata",
+  "languages":   ["en-IN","hi-IN","kn-IN"],
+  "default_language": "en-IN",
+
+  "brand": {
+    "voice_id": "chirp3-hd-en-in-warm",
+    "tone": "warm, concise, professional; address guests as 'sir/ma'am' only if the PMS indicates a title",
+    "assistant_name": "Voice Genie",
+    "wake_word_model": "hello_voice_genie_v3"
+  },
+
+  "automation": {
+    "vendor": "inncom",
+    "edge_gateways": [{ "id": "eg_blr_01", "ha_peer": "eg_blr_02" }],
+    "connection": { "secret_ref": "sm://properties/p_blr_whitefield/inncom" },
+    "room_ref_mapping": "vendor_room_id"        // NOT the hotel room number — see §39.2
+  },
+
+  "pms": {
+    "type": "opera_cloud",
+    "secret_ref": "sm://properties/p_blr_whitefield/opera",
+    "features": ["stay_context","folio_post","dnd_sync","wakeup_call","checkout_event"]
+  },
+
+  "policy": {
+    "climate": { "min_c": 18, "max_c": 26, "max_changes_per_hour": 6 },
+    "quiet_hours": { "start": "22:00", "end": "07:00",
+                     "defer_non_urgent_dispatch": true,
+                     "suppress_unattended_actuation": true },
+    "spend": { "per_stay_cap": { "amount": 15000, "currency": "INR" },
+               "per_order_cap": { "amount": 6000,  "currency": "INR" },
+               "confirmation_required_above": { "amount": 0, "currency": "INR" } },
+    "service_requests": { "max_open": 10, "max_open_per_category": 3,
+                          "sla_minutes": { "housekeeping": 20, "maintenance": 45, "amenity": 15 } },
+    "tier_ceiling": "T3",                      // kill-switch lever — set to "T0" for read-only mode
+    "disabled_tools": []
+  },
+
+  "escalation": {
+    "front_desk":   { "channel": "staff_app", "target": "role:front_desk" },
+    "duty_manager": { "channel": "sms+staff_app", "target": "rota:duty_manager" },
+    "welfare_protocol_ref": "doc://properties/p_blr_whitefield/welfare-protocol-v2",
+    "emergency_number_display": "112",
+    "crisis_helpline_display": "+91-XXXXXXXXXX"
+  },
+
+  "room_types": [
+    { "id": "rt_deluxe_king", "count": 180,
+      "capability_manifest": {
+        "version": "3",
+        "zones": ["bedroom","bathroom"],
+        "capabilities": [
+          { "capability": "lighting.on_off",     "zones": ["bedroom","bathroom"] },
+          { "capability": "lighting.brightness", "zones": ["bedroom"] },
+          { "capability": "climate.setpoint",    "zones": ["bedroom"], "min_c": 18, "max_c": 26 },
+          { "capability": "climate.mode",        "zones": ["bedroom"] },
+          { "capability": "dnd" },
+          { "capability": "tv.power_volume_input" }
+          // note: no curtains capability ⇒ no curtain tool is generated for this room type
+        ],
+        "scenes": ["sleep","welcome","work"]
+      } },
+    { "id": "rt_suite", "count": 20,
+      "capability_manifest": {
+        "version": "3",
+        "zones": ["bedroom","living","bathroom"],
+        "capabilities": [
+          { "capability": "lighting.on_off",     "zones": ["bedroom","living","bathroom"] },
+          { "capability": "lighting.brightness", "zones": ["bedroom","living"] },
+          { "capability": "lighting.scene",      "zones": ["living"] },
+          { "capability": "climate.setpoint",    "zones": ["bedroom","living"], "min_c": 18, "max_c": 26 },
+          { "capability": "curtains.position",   "zones": ["bedroom","living"] },
+          { "capability": "dnd" },
+          { "capability": "tv.power_volume_input" }
+        ],
+        "scenes": ["sleep","welcome","work","movie"]
+      } }
+  ],
+
+  "room_overrides": [
+    { "room_ref": "r_412", "disable": ["curtains.position"], "reason": "motor awaiting replacement" }
+  ],
+
+  "asr": { "primary": "deepgram", "fallback": "google_stt_v2",
+           "phrase_hints_ref": "kb://p_blr_whitefield/phrase-hints" },
+
+  "features": { "fnb_ordering": true, "gemini_live_chat_lane": false,
+                "cross_stay_preferences": false, "personalised_greeting": false },
+
+  "compliance": { "controller": "Example Hotels Pvt Ltd",
+                  "transcript_retention_days": 30,
+                  "notice_version": "in-v2",
+                  "dpa_ref": "doc://legal/dpa/example-apac-v1" }
+}</pre>
+
+<h1 class="part"><span class="pn">Appendix D</span>Repository &amp; Module Layout</h1>
+
+<pre class="ascii">
+ woohoo/                                   monorepo — independently buildable targets
+ ├── services/
+ │   ├── device-gateway/                   Go — WS + mTLS, connection registry
+ │   ├── woohoo-core/                      the modular monolith
+ │   │   └── src/modules/
+ │   │       ├── orchestrator/             turn lifecycle, degradation ladder
+ │   │       ├── router/                   three-lane classification + fast-path grammar
+ │   │       ├── agent/                    context assembly, Gemini, tool loop
+ │   │       ├── mcp-gateway/              registry, scope injection, sanitisation
+ │   │       ├── asr/  tts/                vendor adapters behind interfaces
+ │   │       ├── catalog/                  ← owns tenant/property/room/device tables
+ │   │       ├── device-state/             ← owns state + shadow
+ │   │       ├── service-request/          ← owns tickets
+ │   │       ├── fnb/                      ← owns menus + orders
+ │   │       ├── pms-bridge/               ← owns stay tokens (early carve-out candidate)
+ │   │       ├── knowledge/                ← owns content + embeddings
+ │   │       ├── prefs/                    ← owns consent + preferences
+ │   │       ├── notification/             ← owns delivery state
+ │   │       └── audit/                    ← owns turn records
+ │   ├── policy-service/                   PDP — small, readable, independently versioned
+ │   ├── adapters/{inncom,interel,bacnet,simulator}/
+ │   └── edge-gateway/                     ships to properties
+ ├── device/android/                       com.sb.woohoo
+ ├── packages/
+ │   ├── contracts/                        tool schemas, event schemas, capability definitions
+ │   ├── prompts/                          versioned prompt bundles + response templates
+ │   ├── policy-bundles/                   risk tiers, default property policy
+ │   └── otel/                             shared instrumentation
+ ├── eval/
+ │   ├── suites/{golden,adversarial,safety,capability,regression,latency}/
+ │   └── runner/
+ ├── infra/terraform/{modules,cells/{in,eu,me,us}}/
+ ├── tools/{device-simulator,property-onboarding,conformance}/
+ └── docs/architecture/                    this document
+
+ MODULE BOUNDARY RULES (lint-enforced — this is what makes the monolith modular rather than a ball of mud)
+ 1. A module may only be reached through its public interface. No cross-module imports of internals.
+ 2. A module may only touch its own tables. Cross-module data access goes through the interface.
+ 3. No module imports from `adapters/` — vendor concepts never travel upward.
+ 4. `agent/` may not import `policy-service` types except the verdict contract. It must not be able
+    to evaluate policy itself.
+ 5. `contracts/` imports nothing. Everything else may import it.
+</pre>
+
+<h1 class="part"><span class="pn">Appendix E</span>Glossary</h1>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Term</th><th style="width:78%">Meaning in this document</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Agentic lane</strong></td><td>The routing path where Gemini reasons over the tool surface. Contrast: fast lane, clarify lane.</td></tr>
+    <tr><td><strong>Capability</strong></td><td>An abstract, vendor-neutral ability (e.g. <code>climate.setpoint</code>) with a typed contract. The unit of abstraction that keeps vendor differences out of the model.</td></tr>
+    <tr><td><strong>Capability manifest</strong></td><td>Per-room-type declaration of which capabilities exist, with zones, bounds and driver bindings. Generates the tool surface.</td></tr>
+    <tr><td><strong>Cell</strong></td><td>A complete, independent regional stack. No guest data crosses a cell boundary.</td></tr>
+    <tr><td><strong>Containment</strong></td><td>The proportion of turns resolved without staff involvement.</td></tr>
+    <tr><td><strong>Edge Gateway</strong></td><td>The on-premise appliance that terminates vendor protocols, holds local state and provides offline fallback.</td></tr>
+    <tr><td><strong>Fast lane</strong></td><td>Deterministic handling of high-frequency utterances with no LLM call.</td></tr>
+    <tr><td><strong>Filled pause</strong></td><td>A cached acknowledgement played while the agent works, so perceived latency is far below actual latency.</td></tr>
+    <tr><td><strong>MCP</strong></td><td>Model Context Protocol &mdash; the standard by which capabilities are exposed to a model.</td></tr>
+    <tr><td><strong>MCP Gateway</strong></td><td>The internal control point through which all tool calls pass. Injects scope, filters tools, sanitises results, audits.</td></tr>
+    <tr><td><strong>PDP</strong></td><td>Policy Decision Point &mdash; the component that authorises or refuses every proposed tool call. Sits outside the model.</td></tr>
+    <tr><td><strong>Phrase pack</strong></td><td>Pre-synthesised common phrases cached on the device per voice and language.</td></tr>
+    <tr><td><strong>Risk tier (T0&ndash;T5)</strong></td><td>The classification that determines what the platform requires before an action executes. Defined in &sect;44.</td></tr>
+    <tr><td><strong>Scope</strong></td><td>The immutable <code>{tenant, property, room, device}</code> tuple derived from the device certificate and injected into every tool call.</td></tr>
+    <tr><td><strong>Shadow evaluation</strong></td><td>Replaying fast-lane turns through the agentic lane offline to detect divergence.</td></tr>
+    <tr><td><strong>Turn</strong></td><td>One complete wake-to-response interaction. The unit of tracing, auditing, billing and evaluation.</td></tr>
+    <tr><td><strong>TurnContext</strong></td><td>The immutable per-turn record of scope, capability version, language, consent state and time that follows a turn through every component.</td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 &mdash; Agentic Voice Platform Architecture &middot; Version 1.0 &middot; 29 July 2026<br>
+&dagger; Prices and latency figures are indicative planning numbers current to early 2026 and must be re-quoted before
+contracting.<br>
+Part XI is a compliance posture, not legal advice; confirm jurisdictional specifics with counsel before deployment.
+</p>
+
+</body>
+</html>

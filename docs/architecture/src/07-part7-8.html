@@ -1,0 +1,277 @@
+<!-- ================= PART VII ================= -->
+<h1 class="part"><span class="pn">Part VII</span>Data Architecture</h1>
+
+<h2>35. The domain model</h2>
+
+<pre class="ascii">
+  ┌────────────┐        ┌────────────┐        ┌────────────┐        ┌────────────┐
+  │  TENANT    │1──────*│  PROPERTY  │1──────*│   FLOOR    │1──────*│    ROOM    │
+  │  (chain)   │        │  (hotel)   │        │            │        │            │
+  │            │        │            │        └────────────┘        │ room_no    │
+  │ contract   │        │ timezone   │                              │ room_type  │
+  │ region     │        │ languages  │        ┌────────────┐        │ status     │
+  │ kms_key    │        │ brand_voice│        │  ROOM_TYPE │*──────1│            │
+  └────────────┘        │ automation_│        │            │        └──────┬─────┘
+                        │   vendor   │        │ default    │               │1
+                        │ pms_type   │        │ manifest   │               │
+                        │ policy_cfg │        └────────────┘        ┌──────▼─────┐        ┌────────────┐
+                        └──────┬─────┘                              │  DEVICE    │*──────1│  ZONE      │
+                               │1                                   │            │        │ bedroom/   │
+                               │                                    │ device_id  │        │ living/bath│
+                        ┌──────▼──────┐                             │ kind       │        └────────────┘
+                        │ EDGE_GATEWAY│                             │ vendor_ref │
+                        │  1–2 per    │                             │ capabilities│
+                        │  property   │                             └──────┬─────┘
+                        └─────────────┘                                    │1
+                                                                    ┌──────▼──────┐
+  ┌────────────┐        ┌────────────┐        ┌────────────┐        │ DEVICE_STATE│
+  │ WOOHOO_HUB │1──────1│    ROOM     │       │   STAY     │        │ reported /  │
+  │ (the voice │  bound │             │*─────1│ (from PMS) │        │ desired /   │
+  │  device)   │  to    │             │       │ tokenised  │        │ ts / source │
+  │ cert_id    │        └────────────┘        │ checkout   │        └─────────────┘
+  │ phrase_pack│                              └──────┬─────┘
+  └────────────┘                                     │1
+                                             ┌───────▼────────┐   ┌────────────┐   ┌────────────┐
+                                             │ SERVICE_REQUEST│   │  FNB_ORDER │   │ TURN_RECORD│
+                                             │ category/SLA/  │   │ items/total│   │ immutable, │
+                                             │ status/assignee│   │ folio_ref  │   │ WORM       │
+                                             └────────────────┘   └────────────┘   └────────────┘
+
+  CAPABILITY_MANIFEST  ── versioned, attached to ROOM_TYPE with per-ROOM overrides ──► generates tool surface
+  PROPERTY_POLICY      ── quiet hours, temp bounds, spend caps, confirmation overrides ──► feeds the PDP
+</pre>
+
+<div class="box info">
+  <div class="bt">Two modelling decisions worth defending</div>
+  <p><strong>The voice device is not the room, and is bound to it revocably.</strong> Modelling <code>WOOHOO_HUB</code>
+  as a separate entity with an explicit, timestamped, re-verifiable binding to <code>ROOM</code> is what makes the
+  mis-binding detection in &sect;22 possible. Collapsing them &mdash; treating the device ID as the room ID &mdash; is the
+  shortcut V1 took and it is why a moved device becomes an invisible bug.</p>
+  <p><strong>The capability manifest attaches to room type, not room.</strong> A 300-room property has perhaps eight room
+  types. Authoring eight manifests with a handful of per-room overrides is a day's work; authoring 300 is a project.
+  This single choice is most of the difference between five-day and five-week onboarding.</p>
+</div>
+
+<h2>36. Datastore selection per workload</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:19%">Workload</th><th style="width:19%">Store</th><th style="width:13%">Phase 1</th><th style="width:49%">Why this and not the obvious alternative</th></tr></thead>
+  <tbody>
+    <tr><td>Tenant / property / room / device catalogue</td><td><strong>PostgreSQL</strong> (Aurora Serverless v2), row-level security by tenant</td><td>Postgres container</td><td>Relational, deeply joined, low write volume, needs referential integrity and ad-hoc queries during onboarding. DynamoDB was considered and rejected: the access patterns are not known in advance and change every time a hotel asks a new question. RLS gives defence in depth against a query that forgets its tenant filter.</td></tr>
+    <tr><td>Session / conversation state</td><td><strong>Redis</strong> (ElastiCache), TTL-native</td><td>Redis container</td><td>Sub-millisecond, expiring by nature, and losing it costs one conversation rather than one fact. Never put this in Postgres &mdash; the write rate is per-turn and the value is worthless after 30 minutes.</td></tr>
+    <tr><td>Device state (current)</td><td><strong>Redis</strong> primary + Postgres durable</td><td>Both</td><td>Read on nearly every turn, so it must be fast. Redis is the read path; Postgres holds the authoritative record so a cache flush is not data loss.</td></tr>
+    <tr><td>Device state (history)</td><td><strong>Timescale/Postgres partitions</strong>, then S3 after 30 days</td><td>Postgres</td><td>Needed for &ldquo;why was it cold last night?&rdquo; and for property analytics. High volume &mdash; partition and age it out aggressively.</td></tr>
+    <tr><td>Service requests / orders</td><td><strong>PostgreSQL</strong></td><td>Postgres</td><td>Transactional, needs SLA timers, joins and reporting. Straightforward.</td></tr>
+    <tr><td>Turn records / audit</td><td><strong>S3 with Object Lock (WORM)</strong> + OpenSearch index</td><td>MinIO + OpenSearch</td><td>Append-only, must be tamper-evident, must be searchable for incidents, must expire on a schedule. Object Lock is what makes &ldquo;immutable&rdquo; a technical claim rather than a policy claim.</td></tr>
+    <tr><td>Property knowledge / RAG</td><td><strong>pgvector</strong> in the same Postgres</td><td>pgvector</td><td>Corpus per property is small &mdash; hundreds to low thousands of chunks. A dedicated vector database is unjustified complexity at this size; revisit past ~10&nbsp;M chunks.</td></tr>
+    <tr><td>Guest preferences</td><td><strong>PostgreSQL</strong>, separate schema, per-tenant KMS key, column encryption</td><td>Postgres</td><td>Small but the most sensitive data in the system. Separate schema and key so erasure and key-destruction are surgical.</td></tr>
+    <tr><td>Config &amp; feature flags</td><td><strong>Postgres</strong> + in-process cache with pub/sub invalidation</td><td>Postgres</td><td>Read constantly, written rarely. A kill switch must propagate in seconds &mdash; hence pub/sub, not TTL.</td></tr>
+    <tr><td>Secrets</td><td><strong>AWS Secrets Manager</strong></td><td><code>.env</code> + Docker secrets</td><td>Per-property vendor credentials with rotation. Never in the database, never in the container image.</td></tr>
+    <tr><td>Metrics / traces</td><td><strong>AMP + AMG</strong> (Prometheus/Grafana), OTel</td><td>OTel + Jaeger + Grafana</td><td>Open standards so the Phase 1 and Phase 2 stacks are the same instrumentation.</td></tr>
+  </tbody>
+</table>
+
+<h2>37. Device state: cache, twin and truth</h2>
+
+<p>State consistency is where in-room automation systems quietly break. The BMS is the source of truth, but reading it
+on every turn is too slow and too fragile.</p>
+
+<pre class="ascii">
+   TRUTH                      SHADOW                        CACHE                    AGENT
+   ───────────                ──────────────                ────────────             ─────────
+   BMS head-end   ──push/──►  Edge Gateway     ──stream──►  Redis (cloud)  ──read──►  room.get_state
+   (INNCOM/       ◄─write──   local shadow     ◄─command──  device-state             (pre-fetched)
+    Interel)                  + last-known                   service
+                              + staleness ts
+
+   Freshness contract:
+     • fresh   &lt; 10s   → agent uses it silently
+     • stale   10–120s → agent uses it but the adapter issues a verify-read after any write
+     • expired &gt; 120s  → device-state service forces a synchronous read before answering;
+                         if that read fails, the tool returns UNKNOWN and the agent says so
+                         ("I'm not sure what it's set to right now — shall I set it to 22?")
+
+   Write path:   agent → PDP → device-state.set → adapter → edge → BMS
+                 → BMS confirms → shadow updated → verify-read → agent confirms to guest
+                 If no confirmation within 2.5s: agent says "I've asked for that" (not "done"),
+                 and a follow-up screen update lands when confirmation arrives.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Never say &ldquo;done&rdquo; on an unconfirmed write</div>
+  <p>The most damaging failure mode in a voice automation product is the confident false confirmation. The guest hears
+  &ldquo;I've turned off the lights&rdquo;, the lights stay on, and the product is dead to that guest. The state machine
+  above exists entirely to make the assistant's confidence proportional to its evidence &mdash; <em>&ldquo;done&rdquo;</em>
+  when verified, <em>&ldquo;I've asked for that&rdquo;</em> when pending, <em>&ldquo;I couldn't reach the room
+  system&rdquo;</em> when failed. Encode this in the response templates so it cannot be forgotten.</p>
+</div>
+
+<h2>38. The event backbone</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Event</th><th style="width:22%">Producer</th><th style="width:32%">Consumers</th><th style="width:22%">Delivery</th></tr></thead>
+  <tbody>
+    <tr><td><code>turn.completed</code></td><td>Orchestrator</td><td>Audit sink, analytics, eval sampler, cost attribution</td><td>At-least-once</td></tr>
+    <tr><td><code>service_request.created</code> / <code>.updated</code></td><td>Service Request</td><td>Staff notification, SLA timer, PMS sync, analytics</td><td>At-least-once, ordered per room</td></tr>
+    <tr><td><code>fnb_order.placed</code> / <code>.confirmed</code></td><td>F&amp;B</td><td>Kitchen/POS, folio posting saga, staff app</td><td>Exactly-once semantics via idempotency</td></tr>
+    <tr><td><code>device_state.changed</code></td><td>Edge Gateway</td><td>Device State, analytics, anomaly detection</td><td>At-most-once (high volume, lossy is fine)</td></tr>
+    <tr><td><code>device.offline</code> / <code>.online</code></td><td>Device Gateway</td><td>Ops alerting, property health dashboard</td><td>At-least-once</td></tr>
+    <tr><td><code>policy.denied</code></td><td>PDP</td><td>Security monitoring, eval corpus, abuse detection</td><td>At-least-once</td></tr>
+    <tr><td><code>escalation.raised</code></td><td>Agent / PDP</td><td>Staff paging, on-call, incident log</td><td><strong>At-least-once with acknowledgement tracking</strong></td></tr>
+    <tr><td><code>stay.checked_out</code></td><td>PMS Bridge</td><td>Session purge, stay-memory deletion, device reset to defaults</td><td>At-least-once &mdash; drives data deletion, so must not be lost</td></tr>
+    <tr><td><code>capability_manifest.updated</code></td><td>Tenant Admin</td><td>Cache invalidation, prompt-context rebuild, conformance re-test</td><td>At-least-once</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D17 &mdash; Event backbone</div>
+  <p>Phase&nbsp;1: <strong>NATS JetStream</strong> in Docker &mdash; one dependency, durable, trivially local.
+  Phase&nbsp;2: <strong>EventBridge for routing + SQS for durable per-consumer queues</strong>. Kinesis/MSK only for the
+  device-state telemetry firehose if its volume justifies it, and not before.</p>
+  <p><strong>Every event carries <code>tenant_id</code>, <code>property_id</code>, <code>trace_id</code> and a schema
+  version.</strong> Without tenant_id on the envelope, per-tenant filtering, cost attribution and regional routing all
+  become impossible to add later without a migration.</p>
+</div>
+
+<!-- ================= PART VIII ================= -->
+<h1 class="part"><span class="pn">Part VIII</span>Integration Layer</h1>
+
+<h2>39. Room automation vendor adapters</h2>
+
+<p>Each property runs exactly one automation vendor &mdash; which is a considerable simplification and should be
+preserved as an invariant, not softened. It means an adapter never has to reconcile two sources of truth for the same
+room.</p>
+
+<h3>39.1 The adapter contract</h3>
+<pre class="json">interface AutomationAdapter {
+  // Identity
+  vendor: "inncom" | "interel" | "bacnet" | "knx" | "lutron" | "simulator";
+
+  // Lifecycle
+  connect(property: PropertyBinding): Promise&lt;ConnectionHandle&gt;;
+  health(): Promise&lt;{ reachable: boolean; latencyMs: number; lastError?: string }&gt;;
+
+  // Read
+  readRoomState(roomRef: VendorRoomRef): Promise&lt;CapabilityState[]&gt;;
+  subscribe(roomRef: VendorRoomRef, cb: (change: StateChange) =&gt; void): Unsubscribe;
+
+  // Write — capability in, capability out. The vendor vocabulary never escapes this file.
+  applyCapability(
+     roomRef: VendorRoomRef,
+     op: CapabilityOperation,          // e.g. { capability:"climate.setpoint", value:23.0, zone:"bedroom" }
+     idempotencyKey: string
+  ): Promise&lt;CapabilityResult&gt;;        // { status:"applied"|"pending"|"rejected", observed?: CapabilityState }
+
+  // Conformance — run at onboarding and nightly against a designated test room
+  conformanceSuite(): ConformanceTest[];
+}</pre>
+
+<h3>39.2 Vendor characteristics to design around</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">Vendor</th><th style="width:24%">Typical integration</th><th style="width:30%">Characteristics that shape the adapter</th><th style="width:30%">Design response</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Honeywell INNCOM</strong></td><td>On-prem gateway/server, proprietary protocol over LAN; sometimes a BACnet or REST bridge</td><td>LAN-only. Object/register-based addressing. Older deployments have limited concurrency and dislike polling. Firmware varies by installation year.</td><td>Edge Gateway mandatory. Subscribe/push over poll where supported; long poll interval where not. Per-installation object map in config, not code.</td></tr>
+    <tr><td><strong>Interel</strong></td><td>On-prem controller with an IP/REST or proprietary API</td><td>More modern surface, still LAN-resident. Room addressing by their own room reference &mdash; not the hotel's room number.</td><td>Explicit <code>VendorRoomRef</code> mapping in the catalogue, verified at onboarding. Never assume room number equals vendor reference.</td></tr>
+    <tr><td><strong>BACnet/IP</strong> (Schneider, Siemens, generic BMS)</td><td>Standard BACnet objects</td><td>Standardised but with vendor-specific object naming; discovery is possible but noisy; write priority arrays matter.</td><td>Generic BACnet adapter + per-property object map. Respect priority arrays or you will fight the building's own control logic.</td></tr>
+    <tr><td><strong>KNX</strong></td><td>KNXnet/IP gateway</td><td>Group-address based; no semantics without the project file (ETS)</td><td>Import the ETS project at onboarding to generate the mapping. Manual mapping does not scale.</td></tr>
+    <tr><td><strong>Lutron / Crestron</strong></td><td>Processor with an IP integration protocol</td><td>Excellent lighting, licence-gated integration ports</td><td>Confirm integration licensing during pre-sales &mdash; it is a commercial blocker discovered late otherwise.</td></tr>
+    <tr><td><strong>Simulator</strong></td><td>&mdash;</td><td>Must exist from day one</td><td>Full-fidelity fake with configurable latency, failure injection and state drift. Every CI run and every demo uses it. Without this you cannot test without a hotel.</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">Build the simulator before the second real adapter</div>
+  <p>The single biggest velocity constraint on this project will be access to real hotel hardware. A high-fidelity
+  simulator &mdash; one that models latency, intermittent failures, slow acknowledgements and state that drifts because
+  a housekeeper touched a wall switch &mdash; lets the whole team work without booking a room. It is also the only way to
+  test the degradation ladder, since you cannot ask a hotel to unplug its BMS.</p>
+</div>
+
+<h2>40. The on-premise edge gateway</h2>
+
+<p>You did not list this as a component. It is nonetheless the one that most determines whether this product works,
+because the systems it talks to are not on the internet and will not be put there.</p>
+
+<h3>40.1 Why it is not optional</h3>
+<ul>
+  <li>INNCOM and Interel head-ends are LAN-resident, typically on an isolated building network with no outbound route
+  and certainly no inbound one.</li>
+  <li>Hotel IT will not open inbound firewall ports for a vendor, and the request itself will delay onboarding by
+  months.</li>
+  <li>Round-tripping every light command to a cloud region adds 60&ndash;200&nbsp;ms to an action whose entire budget is
+  under a second.</li>
+  <li>When the property's WAN drops &mdash; which is routine &mdash; the guest must still be able to turn on the lights.
+  Only something inside the building can deliver that.</li>
+</ul>
+
+<pre class="ascii">
+ ┌────────────────────── EDGE GATEWAY (per property; HA pair &gt;250 rooms) ──────────────────────┐
+ │  HARDWARE   fanless x86 or ARM · 4–8 GB RAM · 128 GB SSD · dual NIC (IoT VLAN + uplink)     │
+ │             optional LTE failover · TPM 2.0 · rack or DIN mount · 5–10 yr availability part │
+ │                                                                                             │
+ │  SOFTWARE   container runtime + supervised app bundle, signed images, A/B updates           │
+ │  ┌───────────────────────────────────────────────────────────────────────────────────────┐  │
+ │  │ tunnel-agent      persistent outbound mTLS to cloud; reconnect; no listening ports     │ │
+ │  │ protocol-driver   vendor termination (INNCOM / Interel / BACnet / KNX / Modbus)        │ │
+ │  │ state-shadow      local current state for every room; publishes deltas upstream        │ │
+ │  │ fallback-engine   offline rule set: local voice grammar → direct capability actuation  │ │
+ │  │ outbox            durable queue for tickets/orders/state raised while WAN was down     │ │
+ │  │ device-registry   local record of hubs in this property; serves them on LAN when       │ │
+ │  │                   the cloud is unreachable                                             │ │
+ │  │ health-agent      metrics, logs, remote diagnostics, watchdog                          │ │
+ │  │ (headroom)        reserved capacity for future on-prem ASR — see §15.4                 │ │
+ │  └───────────────────────────────────────────────────────────────────────────────────────┘  │
+ │                                                                                             │
+ │  SECURITY   per-property X.509 from private CA · secure boot · encrypted disk ·             │
+ │          outbound 443 only · no SSH in production (remote shell via tunnel, audited) ·      │
+ │             property-scoped credentials only — compromise affects one hotel                 │
+ └─────────────────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<h3>40.2 Fleet management</h3>
+<p>You are now shipping hardware to hundreds of buildings you do not control. That needs: zero-touch provisioning
+(device boots, calls home, receives its property binding and config); staged, signed, A/B firmware updates with
+automatic rollback on health-check failure; remote diagnostics without inbound access; a physical spares strategy with
+the hotel's engineering team; and a clear runbook for &ldquo;the appliance is dead and the GM is calling&rdquo;. AWS IoT
+Greengrass is a credible base for this and is worth evaluating against a simpler bespoke agent &mdash; the trade is
+capability against another large dependency on the critical path.</p>
+
+<h2>41. PMS integration</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Capability</th><th style="width:30%">Value</th><th style="width:24%">Risk</th><th style="width:26%">Decision</th></tr></thead>
+  <tbody>
+    <tr><td>Stay context (checkout time, room type, language, VIP status)</td><td>High &mdash; enables &ldquo;when do I check out?&rdquo; and correct language selection without asking</td><td>Guest PII in the agent's context</td><td><strong>Yes</strong>, tokenised. Pull minimal fields, cache 15&nbsp;min, never include the guest's name unless the property has enabled personalised greeting and consent exists.</td></tr>
+    <tr><td>Folio posting (room service, minibar, late checkout fees)</td><td>High &mdash; it is the revenue case for F&amp;B ordering</td><td>Money. Disputes. PCI adjacency.</td><td><strong>Yes</strong>, via saga with idempotency and reconciliation. <strong>Never touch a card number</strong> &mdash; post a charge to the folio and let the PMS own settlement (&sect;60).</td></tr>
+    <tr><td>DND / make-up-room sync</td><td>Medium &mdash; keeps the door indicator, PMS and housekeeping board consistent</td><td>Low</td><td><strong>Yes.</strong> This is a small feature that visibly makes the hotel work better, and it is a good early credibility win.</td></tr>
+    <tr><td>Wake-up calls</td><td>Medium</td><td>Low, but a missed wake-up call is a serious guest failure</td><td><strong>Yes</strong>, with explicit read-back of the time and a redundant delivery path.</td></tr>
+    <tr><td>Checkout event</td><td>High &mdash; drives data purge and device reset</td><td>&mdash;</td><td><strong>Required.</strong> Without it, stay-scoped guest data has no deletion trigger, which breaks &sect;57.</td></tr>
+    <tr><td>Express checkout initiated by voice</td><td>Medium</td><td>T3 action, folio finality</td><td>Phase 3. Requires confirmation with the folio total read aloud.</td></tr>
+    <tr><td>Guest identity / loyalty number</td><td>Medium &mdash; enables cross-stay preferences</td><td><strong>High</strong> &mdash; this is what turns transient data into a profile</td><td><strong>Not in Phase 1.</strong> Consent-gated, opt-in, and only after the governance model in Part&nbsp;XI is operating.</td></tr>
+  </tbody>
+</table>
+
+<p>Practically: Oracle OPERA Cloud (OHIP), Mews, Cloudbeds and Protel all expose usable APIs; older on-prem OPERA and
+regional systems frequently mean an HTNG/FIAS interface over a socket, or a middleware vendor. Assume
+<strong>one adapter per PMS family</strong>, the same shape as the automation adapters, and assume the on-prem ones are
+slow and fragile &mdash; which is why PMS Bridge is on the early carve-out list in &sect;11.</p>
+
+<h2>42. Service request and ticketing</h2>
+
+<p>This is where the product earns its keep operationally, and where the agentic approach is most obviously better than
+intent matching &mdash; a free-text description written by a model that understood the guest is far more useful to a
+maintenance technician than a category code.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Concern</th><th style="width:80%">Design</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Duplicate suppression</strong></td><td>Before creating, check open requests for the room in the same category. The agent is told about existing tickets in Layer 3 context, so it usually says &ldquo;that's already logged, they're on their way&rdquo; instead of creating a second one. Belt and braces: the service enforces it too.</td></tr>
+    <tr><td><strong>Priority inference</strong></td><td>The model proposes a priority; the PDP can only ever <em>lower</em> it, never raise it above what property policy permits. &ldquo;Urgent&rdquo; must mean something, and a guest saying &ldquo;urgent&rdquo; is not sufficient evidence.</td></tr>
+    <tr><td><strong>Quiet hours</strong></td><td>Non-urgent requests raised late at night are queued for morning dispatch with the guest told explicitly &mdash; as in the &sect;7 walkthrough. Urgent ones dispatch immediately regardless of hour.</td></tr>
+    <tr><td><strong>SLA timers</strong></td><td>Per category, per property. Breach raises an event and escalates to a duty manager. This is a headline feature for hotel operations teams.</td></tr>
+    <tr><td><strong>Routing</strong></td><td>Category &rarr; department &rarr; on-duty staff, by property shift configuration. Fall back to the duty manager if nobody acknowledges within the escalation window.</td></tr>
+    <tr><td><strong>Guest feedback loop</strong></td><td>Status is available by voice (&ldquo;where are my towels?&rdquo;) and on the device screen. The existing smiley-rating component is a natural completion prompt.</td></tr>
+    <tr><td><strong>Integration with existing tools</strong></td><td>Many chains already run HotSOS, Quore, Alice or similar. Woohoo should <strong>push into them</strong> rather than compete with them &mdash; a hotel will not adopt a second maintenance queue. Treat &ldquo;create ticket in the hotel's existing system&rdquo; as a first-class adapter, not an afterthought.</td></tr>
+    <tr><td><strong>Rate limiting</strong></td><td>Per stay caps by category (default 10 open requests, 3 per category) to bound both abuse and runaway-agent scenarios.</td></tr>
+  </tbody>
+</table>

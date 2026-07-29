@@ -1,0 +1,375 @@
+<!-- ================= PART X ================= -->
+<h1 class="part"><span class="pn">Part X</span>Security Architecture</h1>
+
+<h2>51. Device identity and lifecycle</h2>
+
+<pre class="ascii">
+ MANUFACTURE ──► PROVISION ──► BIND ──► OPERATE ──► ROTATE ──► DECOMMISSION
+      │              │           │          │           │            │
+      │              │           │          │           │            └─ cert revoked, CRL/OCSP updated,
+      │              │           │          │           │               keys wiped, room binding cleared,
+      │              │           │          │           │               device removed from catalogue
+      │              │           │          │           └─ automatic cert renewal at 2/3 lifetime;
+      │              │           │          │              rotation failure alarms before expiry
+      │              │           │          └─ mTLS on every connection; continuous room-binding
+      │              │           │             verification (§22); health + integrity telemetry
+      │              │           └─ installer scans QR (ZXing, already in the app) → device generates a
+      │              │              keypair in hardware keystore → CSR → cloud signs, scoped to
+      │              │              {tenant, property, room} → binding recorded with installer identity
+      │              └─ device boots with a manufacturing bootstrap identity only; cannot act until bound
+      └─ unique hardware ID; secure boot chain; keystore/StrongBox provisioned at factory
+</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Control</th><th style="width:40%">Requirement</th><th style="width:36%">Why it matters here specifically</th></tr></thead>
+  <tbody>
+    <tr><td>Private key never leaves hardware</td><td>Android Keystore / StrongBox; key non-exportable</td><td>A stolen device yields a key that cannot be lifted onto an attacker's machine.</td></tr>
+    <tr><td>Certificate scoped to one room</td><td>Subject/SAN encodes tenant, property, room; scope derived from it server-side</td><td>This is what makes P2 (ambient scope) enforceable rather than aspirational.</td></tr>
+    <tr><td>No cloud provider credentials on device</td><td>Remove <code>google-services.json</code> service-account path and Polly keys entirely</td><td>The single highest-priority security change from V1. Today, one stolen device is a credential breach.</td></tr>
+    <tr><td>Signed OTA with anti-rollback</td><td>A/B partitions, signature verification, monotonic version counter, health-check auto-revert</td><td>A bricked fleet across 500 hotels is an existential incident; a downgrade attack re-opens patched holes.</td></tr>
+    <tr><td>Secure boot</td><td>Verified boot chain to the app</td><td>Prevents persistent tampering on a device an attacker had physical access to.</td></tr>
+    <tr><td>Tamper and relocation response</td><td>Enclosure detection where hardware allows; network-change and room-binding-mismatch alerts</td><td>Detects both theft and the far more common accidental relocation (&sect;22).</td></tr>
+    <tr><td>Hardware mic mute</td><td>Physical switch that cuts the mic line, plus an LED that cannot be driven by the app alone</td><td>A software mute cannot be verified by a guest, and a guest who does not trust the mute does not use the product.</td></tr>
+    <tr><td>Rate limiting per device</td><td>At the gateway: connections, turns/hour, bytes/minute</td><td>Bounds a compromised device to being an annoyance.</td></tr>
+  </tbody>
+</table>
+
+<h2>52. Network and cloud security</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Layer</th><th style="width:80%">Controls</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Property network</strong></td><td>Dedicated IoT VLAN, contractually required. Devices and the Edge Gateway only. No route from guest Wi-Fi. Wired uplink for the edge appliance. Egress limited to the Woohoo allowlist on 443. Alert if a device is observed on an unexpected subnet.</td></tr>
+    <tr><td><strong>Transit</strong></td><td>TLS 1.3 everywhere. mTLS device&rarr;cloud and edge&rarr;cloud. Certificate pinning on the device with a documented rotation path (pinning without a rotation plan is how fleets get bricked). No plaintext anywhere, including inside the VPC.</td></tr>
+    <tr><td><strong>VPC</strong></td><td>Private subnets for everything except the load balancers. Security groups default-deny. VPC endpoints for S3, Secrets Manager, KMS so that traffic does not traverse the internet. Egress via NAT with an explicit allowlist &mdash; a compromised container should not be able to reach an arbitrary host.</td></tr>
+    <tr><td><strong>Ingress</strong></td><td>NLB for the device WebSocket (TCP, mTLS terminated at the app for cert inspection). ALB + WAF for the staff/admin API. Nothing else is reachable from the internet.</td></tr>
+    <tr><td><strong>Identity</strong></td><td>IAM roles per service task, least privilege, no long-lived access keys anywhere. Workload Identity Federation for Vertex AI (&sect;76) so there is no Google service-account key file in the estate.</td></tr>
+    <tr><td><strong>Runtime</strong></td><td>Non-root containers, read-only root filesystem, no shell in production images, distroless or minimal bases, image signing, SBOM per build, continuous CVE scanning with a patch SLA.</td></tr>
+    <tr><td><strong>Data</strong></td><td>Encryption at rest with KMS on every store. Per-tenant CMKs for guest-preference data and audit records &mdash; chains ask for this, and it makes key-destruction a valid erasure mechanism. TLS for all database connections.</td></tr>
+    <tr><td><strong>Logging</strong></td><td>CloudTrail with organisation-wide trails to a separate logging account. Audit records to S3 Object Lock in compliance mode. Log integrity monitoring. Alarms on privileged actions.</td></tr>
+    <tr><td><strong>Access</strong></td><td>SSO with MFA for all human access. No standing production access &mdash; time-boxed, approved, session-recorded break-glass only. Every production access reviewed.</td></tr>
+  </tbody>
+</table>
+
+<h2>53. Tenant isolation and blast radius</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Model</th><th style="width:26%">Applied where</th><th style="width:32%">Mechanism</th><th style="width:26%">Trade-off</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Pooled</strong></td><td>Default for compute and most data</td><td>Shared services; tenant_id on every row with PostgreSQL RLS; tenant claim validated at every service boundary; per-tenant rate limits</td><td>Cheapest and simplest. Requires discipline &mdash; a single query missing its tenant predicate is a breach, which is why RLS exists as the backstop rather than the primary control.</td></tr>
+    <tr><td><strong>Bridged</strong></td><td>Sensitive data: guest preferences, audit records</td><td>Shared infrastructure, per-tenant KMS keys and separate schemas</td><td>Modest cost. Enables cryptographic erasure and satisfies most chain security questionnaires.</td></tr>
+    <tr><td><strong>Siloed</strong></td><td>Regional cells; a small number of large chains that demand it</td><td>Separate AWS account, separate database, separate cell</td><td>Expensive to operate. Price it explicitly as an enterprise tier &mdash; do not absorb it.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The test that matters</div>
+  <p>For every store and every service, be able to answer: <em>&ldquo;if a query in this component forgot its tenant
+  filter, what would happen?&rdquo;</em> If the answer is &ldquo;it returns other tenants' data&rdquo;, you need a
+  backstop &mdash; RLS, a separate connection role per tenant, or a query-layer guard that refuses unfiltered access.
+  Build a CI test that runs representative queries under a tenant-scoped role and asserts zero cross-tenant rows. This
+  is the control a chain's penetration test will probe first.</p>
+</div>
+
+<h2>54. Secrets, keys and credentials</h2>
+<ul>
+  <li><strong>Nothing in images, nothing in the repository, nothing in environment variables in production.</strong>
+  Secrets Manager with rotation; injected at task start; never logged, with a log scrubber as the backstop.</li>
+  <li><strong>Per-property vendor credentials</strong> (BMS, PMS) stored individually, scoped individually, rotated
+  individually. Never a shared credential across properties &mdash; that turns one hotel's incident into all of
+  them.</li>
+  <li><strong>Private CA</strong> for device and edge certificates &mdash; AWS Private CA or an equivalent &mdash; with
+  documented issuance, revocation and CRL/OCSP distribution. Plan revocation before you need it.</li>
+  <li><strong>Key hierarchy:</strong> platform CMK for infrastructure; per-tenant CMK for guest data and audit;
+  per-property data key derivation. Key destruction is a valid erasure mechanism and should be part of the offboarding
+  runbook.</li>
+  <li><strong>LLM and ASR API keys</strong> scoped to the minimum, rotated on a schedule, monitored for anomalous spend
+  (an unusual token bill is often the first sign of an incident).</li>
+</ul>
+
+<!-- ================= PART XI ================= -->
+<h1 class="part"><span class="pn">Part XI</span>Compliance &amp; Governance</h1>
+
+<div class="box warn">
+  <div class="bt">Not legal advice</div>
+  <p>This Part sets out the architecture's compliance posture and the controls it implements. It is written to be handed
+  to counsel and a data protection officer as a starting point, not to replace them. Jurisdictional specifics &mdash;
+  especially around recording consent, employment law for staff captured by the device, and life-safety regulation
+  &mdash; must be confirmed per market before deployment.</p>
+</div>
+
+<h2>55. The consent problem</h2>
+
+<p>This is the hardest non-technical problem in the product, and it deserves to be stated plainly: <strong>you are
+placing a microphone in a private bedroom, and the person in that bedroom did not sign anything.</strong> Neither did
+their children, their visitors, or the housekeeper who enters while it is powered on.</p>
+
+<h3>55.1 Why the usual answer does not work</h3>
+<p>&ldquo;The guest consented at check-in&rdquo; is weak. Consent under GDPR must be freely given, specific, informed and
+unambiguous. A line in the terms accepted at a reception desk while queuing, for a device the guest has not yet seen, in
+a room they cannot decline without declining the room, satisfies none of those adjectives well. And it says nothing at
+all about the guest's ten-year-old, or the visitor who stayed for dinner.</p>
+
+<h3>55.2 The architecture that makes the problem tractable</h3>
+<p>The way through is not better consent language. It is <strong>building a system that does not need strong consent
+because it does not do the thing that requires it</strong>.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Design property</th><th style="width:38%">What it means technically</th><th style="width:36%">What it buys legally</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Wake-word gating, locally</strong></td><td>Audio is processed only in a local ring buffer until the wake word fires. The buffer is discarded otherwise. No audio leaves the device without a wake event.</td><td>The device is not &ldquo;recording the room&rdquo;. It is responding to a deliberate address, which is materially different in both law and guest perception.</td></tr>
+    <tr><td><strong>No raw audio retention, anywhere</strong></td><td>Audio exists in memory for the duration of recognition and is never written to disk, in the cloud or on the device. Zero-retention terms with the ASR vendor.</td><td>Removes the most sensitive category of data from the estate entirely. There is no audio to disclose, subpoena, breach or delete.</td></tr>
+    <tr><td><strong>No voice biometrics</strong></td><td>No speaker identification, no voiceprints, no speaker diarisation for identity purposes.</td><td><strong>Keeps the system out of GDPR Article 9</strong> special-category data and out of biometric-specific statutes such as Illinois BIPA. This is a large risk reduction for a feature of modest value &mdash; do not build voice ID.</td></tr>
+    <tr><td><strong>Redaction before the LLM</strong></td><td>Transcripts pass a PII redactor before entering the model context or the audit store.</td><td>Minimises what is processed and what is retained.</td></tr>
+    <tr><td><strong>Tokenised guest identity</strong></td><td>The agent sees &ldquo;the guest in this room, checking out tomorrow&rdquo;, not a name, unless personalisation is explicitly enabled and consented.</td><td>Most functionality needs no identity at all. Identity becomes an opt-in feature rather than a baseline.</td></tr>
+    <tr><td><strong>Hardware mute + visible indicator</strong></td><td>Physical switch, LED not solely under app control.</td><td>A verifiable, guest-controlled opt-out that does not depend on trusting the vendor's software.</td></tr>
+    <tr><td><strong>Layered notice</strong></td><td>Check-in notice, in-room card, on-screen notice at first use, and a spoken &ldquo;what I am&rdquo; explanation on request.</td><td>Satisfies transparency obligations, including EU AI Act Art.&nbsp;50 disclosure that the guest is interacting with an AI system.</td></tr>
+    <tr><td><strong>Per-stay opt-out</strong></td><td>Guest can disable the assistant for their stay via the device, the staff, or the hotel app; the device shows a clear disabled state.</td><td>Turns a service the guest cannot refuse into one they can, which is the crux of &ldquo;freely given&rdquo;.</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D22 &mdash; Consent posture</div>
+  <p><strong>Do not rely on consent as the lawful basis for the core service.</strong> Rely on the hotel's performance of
+  the accommodation contract and its legitimate interests for room control and service requests &mdash; supported by an
+  architecture that minimises processing to what those bases can carry &mdash; and reserve <em>consent</em> for the
+  genuinely optional layers: cross-stay preference memory, personalised greeting by name, and any analytics beyond
+  aggregate operational metrics. Those must be opt-in, separately, and revocable.</p>
+  <p>Document this in a Legitimate Interests Assessment and a DPIA (&sect;62). The DPIA is not optional here: systematic
+  monitoring in a private space, at scale, with novel technology, meets multiple criteria that make one mandatory in the
+  EU and advisable everywhere.</p>
+</div>
+
+<h2>56. Controller / processor and the DPA</h2>
+
+<p><strong>The hotel is the controller. Woohoo is the processor.</strong> This is almost certainly right, and it should be
+asserted deliberately because it determines who carries which obligation.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:34%">Obligation</th><th style="width:33%">Hotel (controller)</th><th style="width:33%">Woohoo (processor)</th></tr></thead>
+  <tbody>
+    <tr><td>Determining purposes of processing</td><td>Yes</td><td>No &mdash; and must not exceed documented instructions</td></tr>
+    <tr><td>Notice to guests</td><td>Yes &mdash; at check-in and in room</td><td>Provide the materials and on-device notice</td></tr>
+    <tr><td>Lawful basis and LIA</td><td>Yes</td><td>Support with technical documentation</td></tr>
+    <tr><td>DPIA</td><td>Yes, formally</td><td>Author the technical sections; maintain a template DPIA every customer can adopt &mdash; a genuine sales accelerator</td></tr>
+    <tr><td>Data subject requests</td><td>Receives them</td><td>Must be able to fulfil within contractual SLA (&sect;62.3)</td></tr>
+    <tr><td>Retention decisions</td><td>Sets within the options offered</td><td>Enforces technically</td></tr>
+    <tr><td>Sub-processors</td><td>Approves</td><td>Maintain a public, versioned list with change notice: ASR vendor, TTS vendor, Google/Vertex, AWS, telephony</td></tr>
+    <tr><td>Breach notification</td><td>Notifies the regulator within 72&nbsp;h (GDPR)</td><td>Notify the hotel <strong>without undue delay</strong> &mdash; contract for a specific number, typically 24&nbsp;h</td></tr>
+    <tr><td>Security measures</td><td>Assures</td><td>Implements and evidences (Part&nbsp;X)</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">Build the DPA and DPIA templates before the second customer</div>
+  <p>Every hotel chain's legal team will ask for the same twelve documents. Producing them once, properly &mdash; DPA
+  with SCCs, sub-processor list, template DPIA, security whitepaper, data-flow diagram, retention schedule, incident
+  response summary, penetration test summary, completed CAIQ &mdash; converts a recurring multi-week sales blocker into
+  an attachment. This is one of the highest-ROI non-engineering investments available to you, and it is why &sect;61
+  sequences certification early.</p>
+</div>
+
+<h2>57. Data classification and retention</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:15%">Data</th><th style="width:11%">Class</th><th style="width:19%">Purpose</th><th style="width:13%">Retention</th><th style="width:20%">Storage &amp; protection</th><th style="width:22%">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Raw audio</strong></td><td>Highly sensitive</td><td>Recognition only</td><td><strong>None &mdash; never persisted</strong></td><td>Memory only, in transit TLS</td><td>Contractual zero-retention with the ASR vendor. Verify it; do not assume it from marketing copy.</td></tr>
+    <tr><td>Wake-word ring buffer</td><td>Highly sensitive</td><td>Avoid clipping first syllable</td><td>500&nbsp;ms rolling, discarded</td><td>Device RAM</td><td>Never written to device storage.</td></tr>
+    <tr><td><strong>Transcript</strong></td><td>Sensitive</td><td>Reasoning, audit, quality</td><td><strong>30 days redacted</strong>; configurable 7&ndash;90 by the hotel</td><td>S3 Object Lock, per-tenant CMK</td><td>PII redacted at ingest. Raw transcript never leaves the turn.</td></tr>
+    <tr><td>LLM prompt/response</td><td>Sensitive</td><td>Debugging, evals</td><td>30 days; 5% sampled to 180 days for evals</td><td>Same as transcript</td><td>Sampled set requires an additional review before use as eval data.</td></tr>
+    <tr><td>Tool calls &amp; policy verdicts</td><td>Internal</td><td>Audit, dispute resolution</td><td><strong>13 months</strong></td><td>S3 Object Lock (WORM)</td><td>Longer than transcripts &mdash; this is the record that resolves billing disputes and it contains far less personal data.</td></tr>
+    <tr><td>Device state history</td><td>Internal</td><td>Diagnostics, energy analytics</td><td>90 days hot, 13 months cold</td><td>Postgres &rarr; S3</td><td>Occupancy-adjacent &mdash; treat as personal data when linkable to a stay.</td></tr>
+    <tr><td>Service requests / orders</td><td>Business + personal</td><td>Operations, billing</td><td>Per hotel policy, typically 13&ndash;24 months</td><td>Postgres</td><td>Hotel's own record; they usually have an existing retention rule &mdash; inherit it.</td></tr>
+    <tr><td>Stay context from PMS</td><td>Personal</td><td>Contextual answers</td><td><strong>Checkout + 24&nbsp;h</strong></td><td>Redis + Postgres, encrypted</td><td>Hard purge on <code>stay.checked_out</code>. This event is therefore reliability-critical.</td></tr>
+    <tr><td>Cross-stay preferences</td><td>Personal, opt-in</td><td>Personalisation</td><td>Until withdrawn or 24&nbsp;months inactive</td><td>Separate schema, per-tenant CMK</td><td>Consent record stored alongside. Withdrawal deletes within 30 days.</td></tr>
+    <tr><td>Device telemetry</td><td>Operational</td><td>Fleet health</td><td>90 days</td><td>CloudWatch/AMP</td><td>No guest content.</td></tr>
+    <tr><td>Aggregate analytics</td><td>Anonymous</td><td>Product &amp; hotel reporting</td><td>Indefinite</td><td>Postgres/S3</td><td>Must be genuinely non-reidentifiable &mdash; apply minimum cohort sizes.</td></tr>
+    <tr><td>Security &amp; access logs</td><td>Internal</td><td>Security</td><td>13 months</td><td>Separate logging account, WORM</td><td>Required for SOC 2.</td></tr>
+  </tbody>
+</table>
+
+<h3>57.1 The no-train posture</h3>
+<p><strong>No guest data is used to train or fine-tune any model, ours or a vendor's.</strong> Enforce this three ways:
+contractually (paid Vertex AI and enterprise ASR/TTS tiers with documented no-training terms &mdash; confirm the current
+terms in writing rather than relying on documentation); technically (use the API surfaces and settings that exclude data
+from improvement programmes, and pin regional endpoints); and organisationally (any use of production data for
+evaluation requires explicit review, and the eval corpus is built from redacted samples with a documented basis). State
+this posture in the security whitepaper &mdash; it is a question every chain asks.</p>
+
+<h3>57.2 PII redaction in the pipeline</h3>
+<pre class="ascii">
+  transcript ──► REDACTOR ──► redacted transcript ──► LLM context / audit store
+                    │
+                    ├─ names (guest, staff)     → [NAME]      but keep a stable per-turn alias so
+                    ├─ phone numbers            → [PHONE]        the model can still refer to
+                    ├─ email addresses          → [EMAIL]        "the person you mentioned"
+                    ├─ card / account numbers   → [REDACTED]  ← hard block, never passes
+                    ├─ loyalty / passport / ID  → [ID]
+                    └─ full addresses           → [ADDRESS]
+
+  KEPT deliberately: room number (needed and already scoped), times, dates, menu items,
+  temperatures, free-text descriptions of problems, sentiment.
+
+  Failure mode to avoid: over-redaction that breaks the turn. "Send this to [NAME]" is useless.
+  Mitigation: redact into the AUDIT copy always; redact into the LLM copy only for categories the
+  agent does not need. Card numbers are the only category blocked on both paths unconditionally.
+</pre>
+
+<h2>58. Residency and regional topology</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">Cell</th><th style="width:15%">AWS region</th><th style="width:19%">Vertex AI region</th><th style="width:24%">Serves</th><th style="width:28%">Drivers</th></tr></thead>
+  <tbody>
+    <tr><td><code>eu</code></td><td>eu-west-1 / eu-central-1</td><td>europe-west1/4</td><td>EU, UK</td><td>GDPR; chains will require EU-only processing and often EU-only sub-processors</td></tr>
+    <tr><td><code>in</code></td><td>ap-south-1</td><td>asia-south1</td><td>India</td><td>DPDP Act 2023 and its rules; likely your first production market</td></tr>
+    <tr><td><code>me</code></td><td>me-central-1</td><td>me-central1/2</td><td>UAE, Saudi, wider Gulf</td><td>Local data-residency expectations, frequently contractual for government-adjacent and flagship properties</td></tr>
+    <tr><td><code>us</code></td><td>us-east-1</td><td>us-central1</td><td>US, Canada, LatAm</td><td>State privacy laws; recording-consent statutes vary by state</td></tr>
+    <tr><td><code>apac</code></td><td>ap-southeast-1</td><td>asia-southeast1</td><td>SE Asia</td><td>Latency; add when demand justifies</td></tr>
+  </tbody>
+</table>
+
+<div class="box decision">
+  <div class="bt">Decision D23 &mdash; Cell architecture</div>
+  <p>A cell is a <strong>complete, independent stack</strong>: its own VPC, databases, caches, object storage, ASR and
+  TTS endpoints, and Vertex AI region. <strong>No guest data crosses a cell boundary, ever.</strong> Only two things are
+  global: the control plane for deployments and the aggregate, non-identifiable metrics used for product analytics.</p>
+  <p>Build the second cell early &mdash; before you need it &mdash; even if it serves one property. The first cell is
+  architecture; the second cell is what proves the architecture. Discovering region-coupling assumptions during a
+  contractual residency deadline is a bad way to find them.</p>
+</div>
+
+<h2>59. AI-specific regulation</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Instrument</th><th style="width:24%">Applicability</th><th style="width:56%">What Woohoo must do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>EU AI Act</strong></td><td>Applies when deployed in the EU. Most likely classification: <strong>limited risk</strong> with transparency obligations, <em>not</em> high risk &mdash; it is not doing biometric identification, emotion recognition in the workplace, or any Annex III function.</td><td>Disclose to the guest that they are interacting with an AI system (Art.&nbsp;50) &mdash; satisfied by the layered notice in &sect;55.2. Maintain technical documentation. <strong>Do not add features that would reclassify it:</strong> emotion recognition, voice-based identification, or anything that could be read as biometric categorisation would change the analysis substantially. Track GPAI obligations flowing down from the model provider.</td></tr>
+    <tr><td><strong>GDPR / UK GDPR</strong></td><td>EU/UK deployments</td><td>DPIA, LIA, ROPA, DPA with SCCs, data subject rights, breach notification, sub-processor transparency, data minimisation (&sect;57).</td></tr>
+    <tr><td><strong>India DPDP Act 2023</strong></td><td>India deployments</td><td>Notice and consent mechanics per the Act and its rules; grievance redressal contact; children's data restrictions &mdash; relevant, since children are in hotel rooms; breach reporting. Confirm the current rules status before launch.</td></tr>
+    <tr><td><strong>US state privacy laws</strong></td><td>US deployments</td><td>CCPA/CPRA and successors: notice at collection, opt-out rights, no sale/share of personal information. <strong>Plus recording-consent statutes</strong> &mdash; several states require all-party consent for recording a conversation, which is a strong additional reason for the no-audio-retention design.</td></tr>
+    <tr><td><strong>Illinois BIPA and similar</strong></td><td>Illinois; watch for equivalents</td><td>Avoided entirely by not doing voice biometrics. Keep it that way &mdash; the statutory damages model makes this a disproportionate risk.</td></tr>
+    <tr><td><strong>ISO/IEC 42001</strong></td><td>Voluntary AI management system standard</td><td>Increasingly requested in enterprise procurement. Worth pursuing after ISO 27001 &mdash; the management-system scaffolding is shared, so the marginal cost is much lower than the first certification.</td></tr>
+    <tr><td><strong>NIST AI RMF</strong></td><td>Voluntary framework</td><td>Useful as the organising structure for your AI governance documentation (Govern / Map / Measure / Manage). Map the controls in Parts IX&ndash;XI onto it once; it answers a large share of enterprise questionnaires.</td></tr>
+  </tbody>
+</table>
+
+<h2>60. PCI, accessibility, life safety</h2>
+
+<h3>60.1 PCI DSS &mdash; the descoping architecture</h3>
+<p><strong>Woohoo must never see, transmit, process or store a primary account number.</strong> Room-service and amenity
+charges post to the <em>folio</em> via the PMS; the PMS and the hotel's payment provider own settlement, and they are
+already in scope for PCI. If a future feature appears to require card capture, the correct answer is a redirect to the
+hotel's existing payment page or app, never card entry by voice.</p>
+<div class="box warn">
+  <div class="bt">Never accept a card number by voice</div>
+  <p>Beyond PCI scope, consider the physical setting: a guest reading a card number aloud in a hotel room, into a device
+  connected to a hotel network, is a bad idea on its own terms. Make it structurally impossible &mdash; no tool accepts
+  a card field, and the redactor blocks card-shaped strings on every path unconditionally.</p>
+</div>
+
+<h3>60.2 Accessibility</h3>
+<ul>
+  <li><strong>Voice must never be the only path.</strong> Guests who are deaf, hard of hearing, non-verbal, or who have
+  atypical speech must be able to reach every function through the device screen. This is both an obligation (ADA in the
+  US, EN&nbsp;301&nbsp;549 in the EU, equivalents elsewhere) and simply correct.</li>
+  <li>Screen output must meet contrast requirements, support text scaling, and pair with the spoken response rather than
+  replacing it.</li>
+  <li>Support slower speech, extended endpointing timeouts and repeat requests as a per-room accessibility mode that
+  staff can enable at check-in.</li>
+  <li>The room phone and the physical wall controls must always remain functional. Woohoo augments the room; it must not
+  become a single point of failure for controlling it.</li>
+</ul>
+
+<h3>60.3 Life safety</h3>
+<ul>
+  <li>Woohoo must not interfere with, gate, or appear to substitute for fire detection, alarms, emergency lighting or
+  door hardware.</li>
+  <li>Automation must fail safe: if the platform is down, wall switches, thermostats and the room phone all still
+  work.</li>
+  <li>No capability may leave a room in an unsafe state &mdash; HVAC off in extreme conditions, all lighting off in a
+  windowless bathroom. Encode these as hard PDP bounds per property.</li>
+  <li>Coordinate with the property's fire and life-safety consultant during onboarding where the device is wall-mounted
+  or shares the automation bus with life-safety equipment.</li>
+</ul>
+
+<h2>61. Certification roadmap and procurement</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Artefact</th><th style="width:15%">When</th><th style="width:14%">Indicative cost&dagger;</th><th style="width:49%">Why, and who asks for it</th></tr></thead>
+  <tbody>
+    <tr><td>Security whitepaper + data-flow diagram</td><td>Now</td><td>Internal time</td><td>Asked for by the first serious prospect. Cheapest thing on this list and it unblocks conversations.</td></tr>
+    <tr><td>DPA + SCCs + sub-processor list</td><td>Now</td><td>Legal fees</td><td>Required before any EU or UK pilot. Blocking.</td></tr>
+    <tr><td>Template DPIA</td><td>Before first EU deployment</td><td>Internal + counsel</td><td>The hotel must produce one; giving them 80% of it wins goodwill and weeks.</td></tr>
+    <tr><td>Third-party penetration test</td><td>Before first production property</td><td>$15&ndash;40k/yr</td><td>Universally requested. Annual, plus after major architecture changes.</td></tr>
+    <tr><td>Completed CAIQ / SIG-lite</td><td>Before enterprise sales</td><td>Internal time</td><td>Standardised questionnaires; answering once saves answering fifty bespoke ones.</td></tr>
+    <tr><td><strong>SOC 2 Type II</strong></td><td>Month 9&ndash;18</td><td>$30&ndash;80k first year</td><td>The single most requested certification by North American and international chains. Type I first (~3 months), then a 6&ndash;12 month observation window for Type II. Start collecting evidence <em>now</em> &mdash; the observation period is the long pole, and it cannot be compressed.</td></tr>
+    <tr><td><strong>ISO 27001</strong></td><td>Month 12&ndash;24</td><td>$25&ndash;60k</td><td>Preferred by EU, Middle East and APAC chains where SOC 2 is less familiar. Overlaps heavily with SOC 2 evidence.</td></tr>
+    <tr><td>ISO/IEC 42001</td><td>Month 24+</td><td>$20&ndash;40k</td><td>AI-specific. Increasingly appearing in enterprise AI procurement. Cheap once 27001 exists.</td></tr>
+    <tr><td>Cyber insurance</td><td>Before first production</td><td>Premium</td><td>Contractually required by most chains; minimum coverage is usually specified in the MSA.</td></tr>
+    <tr><td>Uptime SLA + support model</td><td>Before first contract</td><td>&mdash;</td><td>Define what you will commit to before a customer defines it for you. 99.5% on the voice path is defensible for Phase 2; do not sign 99.9% before you have the multi-AZ posture to back it.</td></tr>
+  </tbody>
+</table>
+
+<h2>62. Governance operating model</h2>
+
+<h3>62.1 Artefacts to maintain</h3>
+<table class="tight">
+  <thead><tr><th style="width:26%">Artefact</th><th style="width:16%">Cadence</th><th style="width:58%">Contents</th></tr></thead>
+  <tbody>
+    <tr><td>AI system card</td><td>Per major release</td><td>Purpose, capabilities, limitations, model versions, eval results, known failure modes, human oversight arrangements. Hand this to chains; it pre-empts a dozen questions.</td></tr>
+    <tr><td>ROPA (records of processing)</td><td>Quarterly review</td><td>Per processing activity: purpose, categories, recipients, transfers, retention, security measures.</td></tr>
+    <tr><td>DPIA</td><td>Per market, reviewed annually</td><td>Necessity and proportionality, risks to guests and staff, mitigations, residual risk, sign-off.</td></tr>
+    <tr><td>Risk register</td><td>Monthly</td><td>The threats in &sect;43 plus operational and vendor risks, each with owner, control and residual rating.</td></tr>
+    <tr><td>Model &amp; prompt change log</td><td>Per change</td><td>What changed, why, eval deltas, rollout plan, rollback trigger, approver.</td></tr>
+    <tr><td>Incident register</td><td>Per incident</td><td>Including <em>agent behaviour</em> incidents &mdash; a wrong action or an inappropriate response is an incident, not a bug report.</td></tr>
+    <tr><td>Sub-processor register</td><td>On change, 30-day notice</td><td>Published; customers have a right to object.</td></tr>
+  </tbody>
+</table>
+
+<h3>62.2 Rituals</h3>
+<ul>
+  <li><strong>Weekly quality review</strong> (30&nbsp;min): eval dashboard, containment and escalation rates, top failure
+  clusters, sampled turns read by a human. This is the single most valuable recurring meeting in an agentic product.</li>
+  <li><strong>Prompt/model change approval:</strong> lightweight, two-person, but recorded. Eval gate must be green.
+  A prompt change is a production deploy, not a copy edit.</li>
+  <li><strong>Monthly safety review:</strong> policy denials, guard violations, escalations, red-team findings, near
+  misses.</li>
+  <li><strong>Quarterly:</strong> access review, kill-switch drill, DR test, sub-processor review, risk register
+  refresh.</li>
+  <li><strong>Annually:</strong> penetration test, DPIA refresh, tabletop incident exercise, policy review.</li>
+</ul>
+
+<h3>62.3 Data subject rights for a transient guest</h3>
+<p>A guest who stayed three nights and asks for their data three months later is genuinely hard to identify &mdash; you
+deliberately did not store their name. The answer is to make that a feature rather than an evasion, and to be able to
+say precisely:</p>
+<ul>
+  <li>Requests are received by the hotel (controller) and passed to Woohoo with the stay reference.</li>
+  <li>Woohoo resolves stay reference &rarr; room &rarr; turn records for the stay window, and can produce or delete
+  them.</li>
+  <li>Because raw audio is never retained and transcripts are redacted and expire in 30 days, most requests arriving
+  after that window are answered honestly with &ldquo;this data no longer exists&rdquo;, which is a
+  <em>compliant and complete</em> answer, and a much better one than a partial export.</li>
+  <li>Erasure for opted-in cross-stay preferences is a real delete plus, where a chain requires it, per-tenant key
+  destruction.</li>
+  <li>Target: acknowledge in 5 working days, fulfil in 30 days. Build the tooling for this before the first request,
+  because it will arrive during a sales cycle.</li>
+</ul>
+
+<h3>62.4 Ownership (RACI for a small company)</h3>
+<table class="tight">
+  <thead><tr><th style="width:30%">Area</th><th style="width:18%">Accountable</th><th style="width:22%">Responsible</th><th style="width:30%">Consulted</th></tr></thead>
+  <tbody>
+    <tr><td>Agent behaviour &amp; safety policy</td><td>Head of Product</td><td>Agent engineer + eval owner</td><td>Legal, hotel ops, security</td></tr>
+    <tr><td>Prompt/model releases</td><td>Tech lead</td><td>Agent engineer</td><td>Product, QA</td></tr>
+    <tr><td>Security &amp; certifications</td><td>CTO</td><td>Security engineer / vCISO</td><td>External auditor</td></tr>
+    <tr><td>Privacy &amp; DPO function</td><td>CEO (until a DPO is appointed)</td><td>External DPO / counsel</td><td>Hotel DPOs</td></tr>
+    <tr><td>Incident response</td><td>CTO</td><td>On-call engineer</td><td>Legal, comms, affected hotels</td></tr>
+    <tr><td>Vendor / sub-processor management</td><td>CTO</td><td>Platform engineer</td><td>Legal, procurement</td></tr>
+    <tr><td>Property onboarding &amp; conformance</td><td>Head of Delivery</td><td>Solutions engineer</td><td>Hotel engineering, vendor</td></tr>
+  </tbody>
+</table>
+<p class="small">For a company at this stage, several of these will be the same person. That is fine and normal &mdash;
+what matters is that the role is named, so that when a regulator or a chain's auditor asks &ldquo;who is accountable for
+agent behaviour?&rdquo; there is an answer.</p>

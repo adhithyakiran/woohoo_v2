@@ -1,0 +1,266 @@
+<!-- ================= PART II ================= -->
+<h1 class="part"><span class="pn">Part II</span>End-to-End Architecture</h1>
+
+<h2>6. The complete system map</h2>
+
+<p>This is the whole system, from a guest speaking in room 412 to a relay closing in a fan-coil unit and a confirmation
+coming back out of the speaker. Everything else in this document is a zoom into one of these boxes.</p>
+
+<pre class="ascii">
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║  ZONE A — GUEST ROOM (untrusted physical space, hotel IoT VLAN)                                          ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════════════════╣
+║                                                                                                          ║
+║   👤 Guest ──"Hello Voice Genie, it's too cold and send someone to fix the shower"──►                     ║
+║                                                                                                          ║
+║   ┌────────────────────────── WOOHOO HUB  (Android, com.sb.woohoo) ─────────────────────────────────┐    ║
+║   │  Mic array ► AEC / beamform ► Wake Word (Sensory THF) ► VAD ► Endpointer ► Opus 16k encoder     │    ║
+║   │  Screen (state + confirmations)   Speaker ◄ Opus decoder ◄ jitter buffer ◄ earcon cache         │    ║
+║   │  Local: X.509 device identity (TPM/keystore) │ offline IR/relay fallback │ OTA agent │ mic-mute │    ║
+║   └───────────────────────────────────────┬─────────────────────────────────────────────────────────┘    ║
+║                                           │  ONE WebSocket, mTLS, Opus 20ms frames + JSON control        ║
+╚═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╝
+                                            │
+╔═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╗
+║  ZONE B — PROPERTY (hotel premises, behind hotel firewall)                                               ║
+╠═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╣
+║   ┌───────────────────────────────────────▼──────────────────────────────────────────────────────────┐   ║
+║   │  EDGE GATEWAY  (small x86/ARM appliance, 1 per property, HA pair on large properties)            │   ║
+║   │  • Outbound-only mTLS tunnel to cloud — never an inbound port                                    │   ║
+║   │  • Local device-state cache + shadow      • Local fallback rules when WAN is down                │   ║
+║   │  • Vendor protocol termination: INNCOM / Interel / BACnet / KNX / Modbus / Lutron                │   ║
+║   │  • Store-and-forward queue for service tickets    • Property-local mDNS discovery                │   ║
+║   └──────┬──────────────────────────────────────────────────────────┬────────────────────────────────┘   ║
+║          │ LAN (vendor protocol)                                    │ LAN                                ║
+║   ┌──────▼───────────────────┐  ┌─────────────────────┐   ┌─────────▼────────────┐  ┌────────────────┐   ║
+║   │ ROOM AUTOMATION HEAD-END │  │ Room devices        │   │ PMS (on-prem variant)│  │ Staff devices  │   ║
+║   │ Honeywell INNCOM │Interel│  │ thermostat, dimmers,│   │ Opera / Mews /       │  │ housekeeping &amp; │   ║
+║   │ │ Schneider │ KNX │ ...  │──│ curtains, DND, TV   │   │ Cloudbeds / IDS      │  │ maint. tablets │   ║
+║   │ ONE PER PROPERTY         │  │ door contact, occ.  │   └──────────────────────┘  └────────────────┘   ║
+║   └──────────────────────────┘  └─────────────────────┘                                                  ║
+╚═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╝
+                                            │  TLS 1.3 / mTLS  · outbound 443 only
+╔═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╗
+║  ZONE C — WOOHOO CLOUD  (regional cell: eu / in / me / us)                                               ║
+╠═══════════════════════════════════════════╪══════════════════════════════════════════════════════════════╣
+║  ┌────────────────────────────────────────▼─────────────────────────────────────────────────────────┐    ║
+║  │ ① DEVICE GATEWAY        terminates mTLS · validates device cert · device_id→tenant/property/room │    ║
+║  │   (stateful, sticky)    audio demux · backpressure · reconnect/resume · rate limit per device    │    ║
+║  └────────────────────────────────────────┬─────────────────────────────────────────────────────────┘    ║
+║  ┌────────────────────────────────────────▼─────────────────────────────────────────────────────────┐    ║
+║  │ ② SESSION ORCHESTRATOR   owns the turn · barge-in · timeouts · trace root · degradation ladder   │    ║
+║  └───┬──────────────────────┬───────────────────────────────────┬──────────────────────────┬────────┘    ║
+║      │                      │                                   │                          │             ║
+║  ┌───▼──────────┐   ┌───────▼────────┐               ┌──────────▼──────────┐    ┌──────────▼─────────┐   ║
+║  │ ③ ASR ADAPTER│   │ ⑦ TTS ADAPTER  │               │ ④ THREE-LANE ROUTER │    │ ⑫ AUDIT / TRACE    │   ║
+║  │ Deepgram ⇄   │   │ Chirp3-HD ⇄    │               │  fast │ agentic │   │    │ per-turn record    │   ║
+║  │ Google STTv2 │   │ Polly Gen.     │               │       │   clarify   │    │ WORM S3 + OpenSrch │   ║
+║  │ phrase boost │   │ phrase cache   │               └──────────┬──────────┘    └────────────────────┘   ║
+║  └──────────────┘   └────────────────┘                          │                                        ║
+║                                                      ┌──────────▼────────────────────────────────────┐   ║
+║                                                      │ ⑤ AGENT RUNTIME                               │   ║
+║                                                      │   context assembly → Gemini → tool proposals  │   ║
+║                                                      │   reflection · verification · response draft  │   ║
+║                                                      └──────────┬────────────────────────────────────┘   ║
+║                                                                 │ proposed tool call                     ║
+║                                                      ┌──────────▼────────────────────────────────────┐   ║
+║                                                      │ ⑥ POLICY DECISION POINT   ★ THE CHOKE POINT ★ │   ║
+║                                                      │   scope · risk tier · quiet hours · spend cap │   ║
+║                                                      │   consent · capability · rate · confirmation  │   ║
+║                                                      └──────────┬────────────────────────────────────┘   ║
+║                                                                 │ ALLOW / CONFIRM / DENY / ESCALATE      ║
+║  ┌──────────────────────────────────────────────────────────────▼────────────────────────────────────┐   ║
+║  │ ⑧ MCP GATEWAY   tool registry · per-tenant tool filtering · scope injection · result sanitisation │   ║
+║  │                 caching · connection pooling · schema versioning · uniform error shaping          │   ║
+║  └──┬──────────┬──────────┬───────────┬───────────┬──────────┬───────────┬──────────┬────────────────┘   ║
+║  ┌──▼───────┐┌─▼────────┐┌▼─────────┐┌▼─────────┐┌▼────────┐┌▼─────────┐┌▼────────┐┌▼─────────────────┐  ║
+║  │ Property ││ Device   ││ Service  ││   F&amp;B    ││  PMS    ││Knowledge ││ Guest   ││ Notification     │  ║
+║  │ Catalog  ││ State    ││ Request  ││  Order   ││ Bridge  ││ / RAG    ││ Prefs   ││ / Comms          │  ║
+║  │  MCP     ││  MCP     ││   MCP    ││   MCP    ││  MCP    ││   MCP    ││  MCP    ││   MCP            │  ║
+║  └────┬─────┘└────┬─────┘└────┬─────┘└────┬─────┘└───┬─────┘└────┬─────┘└────┬────┘└────┬─────────────┘  ║
+║       │           │           │           │          │           │           │          │                ║
+║  ┌────▼───────────▼───────────▼───────────▼──────────▼───────────▼───────────▼──────────▼─────────────┐  ║
+║  │ ⑨ DOMAIN SERVICES  ·  Aurora PostgreSQL (RLS) · Redis session+state cache · S3 · OpenSearch ·Vector│  ║
+║  └────┬──────────────────────────────────────────────────────────────────────────────┬────────────────┘  ║
+║  ┌────▼──────────────────────────────────────────┐   ┌─────────────────────────────▼─────────────────┐   ║
+║  │ ⑩ AUTOMATION ADAPTERS (one per vendor)        │   │ ⑪ EVENT BACKBONE  EventBridge + SQS           │   ║
+║  │  inncom-adapter │ interel-adapter │ bacnet │…  │   │  turn.completed · ticket.created · state.chg │   ║
+║  │  capability→vendor command translation        │   │  device.offline · policy.denied · alert.raised│   ║
+║  └────┬──────────────────────────────────────────┘   └───────────────────┬───────────────────────────┘   ║
+╚═══════╪════════════════════════════════════════════════════════════════╪═════════════════════════════════╝
+        │ (down the tunnel to Zone B Edge Gateway)                        │
+╔═══════▼════════════════════════════════════════════════════════════════▼═════════════════════════════════╗
+║  ZONE D — EXTERNAL PROVIDERS                                                                             ║
+║  Vertex AI / Gemini (regional endpoint, no-train)  ·  ASR vendor  ·  TTS vendor  ·  Cloud PMS (Opera     ║
+║  Cloud, Mews, Cloudbeds)  ·  Twilio (voice/video escalation)  ·  Spotify  ·  Push (FCM/APNs)  ·  SMS     ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+</pre>
+<div class="cap">Figure 1 &mdash; Woohoo V2 end-to-end architecture. Numbered components ①&ndash;⑫ are catalogued in &sect;8.
+The Policy Decision Point ⑥ is deliberately drawn as a full-width choke point: no path reaches the world without it.</div>
+
+<h2>7. The critical path, narrated</h2>
+
+<p>Take the compound utterance from Figure 1 &mdash; <em>&ldquo;it's too cold and send someone to fix the shower&rdquo;</em>
+&mdash; and follow it. This is the walkthrough to argue with; if this sequence is right, the rest of the document is
+detail.</p>
+
+<pre class="ascii">
+ t=0ms      Guest speaks the wake phrase. Sensory THF fires on-device. Device plays a 60ms earcon
+            immediately (perceived responsiveness is bought here, not later) and opens/reuses the WS.
+
+ t=+40ms    Device begins streaming Opus frames. A 500ms pre-roll ring buffer is flushed first so the
+            first syllable after the wake word is never clipped. AEC is already active.
+
+ t=+40ms    ① DEVICE GATEWAY validates the client cert (already established on the persistent WS),
+            looks up device_id → {tenant_id, property_id, room_id, capability_manifest_version,
+            language, consent_state}. This resolution is CACHED — it must not cost a DB hit per turn.
+            The resolved scope becomes an immutable "TurnContext" that follows the turn everywhere.
+
+ t=+45ms    ② SESSION ORCHESTRATOR creates turn_id, starts the root trace span, loads session state
+            from Redis (last 3 turns, pending clarification, last-referenced entity for anaphora).
+
+ t=+50ms    ③ ASR ADAPTER opens a streaming recognition session, injecting phrase hints assembled from
+            the property's own vocabulary: F&B menu items, amenity names, staff-facing terms, local
+            landmarks, and the room's own device labels. This is worth several points of WER and is
+            the single cheapest accuracy win available.
+
+ ...        Guest finishes speaking. Device-side endpointer detects end-of-utterance (~380ms of
+            trailing silence, adaptive) and sends an explicit end-of-turn control frame — the cloud
+            does NOT wait for its own silence timer. This saves 200-400ms versus server-side VAD.
+
+ t=+2,900ms Final transcript: "it's too cold and send someone to fix the shower, it's dripping".
+ (~150ms      Confidence 0.91. PII redactor runs (no PII here). Transcript enters ④ THE ROUTER.
+  after
+  speech
+  ended)
+
+ t=+2,910ms ④ ROUTER: fast-lane matcher scores this. It is compound and contains a free-text
+            maintenance description → no deterministic match → AGENTIC LANE. (Had the guest said
+            "turn on the lights", the fast lane would have executed it by t=+3,000ms with no LLM call.)
+
+ t=+2,915ms ⑤ AGENT RUNTIME assembles context:
+              · system prompt (versioned artefact, cached)
+              · TurnContext: property brand voice, room 412, language en-IN, time 23:14 local
+              · capability manifest for THIS room, rendered as the available tool set
+              · current room state snapshot (pre-fetched in parallel at t=+50ms — see §27)
+              · last 3 turns of conversation
+              · pending-ticket summary ("do not create a duplicate")
+            Sends to Gemini 2.5 Flash with structured tool-calling enabled.
+
+ t=+3,380ms Gemini returns TWO proposed tool calls in one turn:
+              (a) climate.set_temperature { zone: "bedroom", target_c: 23.0 }
+                  — chosen because state showed setpoint 19.5°C and the guest said "too cold"
+              (b) service.create_request { category: "maintenance", subcategory: "plumbing",
+                    description: "shower dripping", priority: "normal" }
+
+ t=+3,385ms ⑥ POLICY DECISION POINT evaluates each independently:
+              (a) climate.set_temperature → tier T1. Scope check: zone belongs to room 412 ✓.
+                  Capability check: property has HVAC control ✓. Bounds check: 23.0 within the
+                  property's permitted 18–26°C band ✓. Quiet hours: no restriction on climate ✓.
+                  → ALLOW
+              (b) service.create_request → tier T2. Duplicate check: no open plumbing ticket for
+                  412 ✓. Rate limit: 3rd ticket this stay, cap is 10 ✓. It is 23:14 — property
+                  policy says non-urgent maintenance after 22:00 is queued for 08:00 dispatch,
+                  not suppressed. → ALLOW WITH ANNOTATION {dispatch_at: 08:00}
+            Both verdicts are written to the audit record BEFORE execution.
+
+ t=+3,390ms ⑧ MCP GATEWAY injects tenant/property/room scope server-side (the model's arguments are
+            merged UNDER the injected scope — model-supplied scope fields are stripped, not trusted),
+            then dispatches.
+
+ t=+3,400ms (a) → ⑩ inncom-adapter → down the tunnel → Zone B Edge Gateway → INNCOM head-end →
+                  fan-coil setpoint write. Adapter returns ack + verified new state.
+            (b) → Service Request domain service → row in Aurora → event on ⑪ → staff app push +
+                  ticket appears on the maintenance tablet queue for 08:00.
+
+ t=+3,760ms Both results return to ⑤. The agent composes ONE reply, not two:
+            "I've set it to 23 degrees, it'll warm up in a few minutes. I've also logged the dripping
+             shower for maintenance — they'll come by after 8 in the morning so you're not disturbed
+             tonight. Anything else?"
+
+ t=+3,790ms ⑦ TTS ADAPTER begins streaming synthesis. First audio byte at ~+3,900ms.
+            ⚠ BUT the guest has not been sitting in silence: at t=+3,400ms the orchestrator emitted a
+            filled-pause acknowledgement ("Sure, one moment—") from the CACHED earcon/phrase set the
+            instant the first tool call was authorised. Perceived latency is ~500ms, not ~3.9s.
+
+ t=+3,900ms Audio streams to the device. Screen shows: 23°C · Maintenance request logged #4471.
+
+ t=+4,400ms ⑫ AUDIT: the complete turn record is sealed and written — redacted transcript, TurnContext
+            digest, model+prompt version, reasoning summary, both tool calls, both policy verdicts,
+            both outcomes, latencies per span, cost. Raw audio was never written to disk at any point.
+</pre>
+
+<div class="box info">
+  <div class="bt">Three things to notice in that trace</div>
+  <ol>
+    <li><strong>The acknowledgement is emitted before the answer exists.</strong> This is the single highest-leverage
+    UX decision in the system and it costs nothing. See &sect;20.4.</li>
+    <li><strong>Room state was pre-fetched at t=+50ms</strong>, in parallel with the guest still speaking. By the time
+    the model needs it, it is already in the context. This removes an entire tool round-trip &mdash; roughly 400&ndash;600&nbsp;ms
+    &mdash; from the majority of turns. See &sect;27.2.</li>
+    <li><strong>The policy verdicts were written before execution, not after.</strong> If the process dies mid-turn, the
+    audit record still shows what was authorised. Log-after-the-fact loses exactly the records you need most.</li>
+  </ol>
+</div>
+
+<h2>8. Component inventory</h2>
+
+<p>Every box in Figure 1, with what it owns and whether it is built, bought or already exists. <span class="pill p-new">New</span>
+means it does not exist in V1.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:4%">#</th><th style="width:17%">Component</th><th style="width:37%">Responsibility (owns)</th><th style="width:15%">Scaling profile</th><th style="width:13%">Build / Buy</th><th style="width:14%">Status</th></tr></thead>
+  <tbody>
+    <tr><td>&mdash;</td><td><strong>Woohoo Hub</strong> (device)</td><td>Audio capture, AEC, wake word, VAD, endpointing, Opus codec, playback, screen state, device identity, OTA, offline fallback</td><td>N/A &mdash; per unit</td><td>Build (Android, exists)</td><td>Refactor: strip cloud credentials, replace direct gRPC STT with WS to gateway</td></tr>
+    <tr><td>&mdash;</td><td><strong>Edge Gateway</strong></td><td>Property-local protocol termination, state shadow, offline fallback rules, store-and-forward, outbound tunnel</td><td>1&ndash;2 per property</td><td>Build (Go/Rust, container on appliance)</td><td><span class="pill p-new">New</span> &mdash; hard requirement, see &sect;40</td></tr>
+    <tr><td>①</td><td><strong>Device Gateway</strong></td><td>WS termination, mTLS + device cert validation, identity&rarr;scope resolution, backpressure, per-device rate limits, reconnect/resume</td><td>Connection-bound; memory &amp; FD heavy, low CPU</td><td>Build (Go or Node)</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>②</td><td><strong>Session Orchestrator</strong></td><td>Turn lifecycle, barge-in, timeouts, the degradation ladder, trace root, filled-pause emission</td><td>IO-bound, long-lived</td><td>Build (Python/TS)</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>③</td><td><strong>ASR Adapter</strong></td><td>Vendor-neutral streaming recognition interface, phrase-hint assembly, failover, confidence normalisation</td><td>IO-bound, stream-concurrency</td><td>Build wrapper / Buy ASR</td><td><span class="pill p-new">New</span> (V1 called Google directly from device)</td></tr>
+    <tr><td>④</td><td><strong>Router</strong></td><td>Lane selection: deterministic fast path, agentic path, clarification path; confidence thresholds</td><td>CPU-light</td><td>Build</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>⑤</td><td><strong>Agent Runtime</strong></td><td>Context assembly, Gemini invocation, tool-call loop, reflection, response drafting, token budget enforcement</td><td>IO-bound (waiting on LLM), bursty</td><td>Build</td><td><span class="pill p-new">New</span> &mdash; replaces Dialogflow</td></tr>
+    <tr><td>⑥</td><td><strong>Policy Decision Point</strong></td><td>Scope validation, risk tiering, confirmation requirements, quiet hours, spend caps, consent gating, capability gating, rate limits</td><td>CPU-light, must be &lt;5&nbsp;ms</td><td>Build (OPA/Cedar or hand-rolled)</td><td><span class="pill p-new">New</span> &mdash; the most important new component</td></tr>
+    <tr><td>⑦</td><td><strong>TTS Adapter</strong></td><td>Streaming synthesis, brand voice per property, SSML, phrase cache, failover</td><td>IO-bound</td><td>Build wrapper / Buy TTS</td><td><span class="pill p-new">New</span> (V1 did Polly on-device)</td></tr>
+    <tr><td>⑧</td><td><strong>MCP Gateway</strong></td><td>Tool registry, per-tenant tool filtering, scope injection, result sanitisation &amp; untrusted-content tagging, caching, pooling, schema versioning</td><td>IO-bound, fan-out</td><td>Build</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>&mdash;</td><td><strong>Property Catalog MCP</strong></td><td>Hotel&rarr;property&rarr;floor&rarr;room&rarr;device inventory, zones, labels, capability manifests, property policy config</td><td>Read-heavy, cacheable</td><td>Build</td><td>Partially exists as DB; needs MCP facade</td></tr>
+    <tr><td>&mdash;</td><td><strong>Device State MCP</strong></td><td>Current and desired state of every controllable device; shadow reconciliation; state history</td><td>Read-heavy + write bursts</td><td>Build</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>&mdash;</td><td><strong>Service Request MCP</strong></td><td>Housekeeping / maintenance / amenity requests: create, status, cancel; SLA timers; duplicate detection</td><td>Balanced</td><td>Build</td><td>Exists in some form; needs MCP facade</td></tr>
+    <tr><td>&mdash;</td><td><strong>F&amp;B Order MCP</strong></td><td>Menu retrieval, availability, cart, order placement, folio posting request, order status</td><td>Balanced</td><td>Build</td><td><code>feature-fnb</code> exists on device; server side needs building</td></tr>
+    <tr><td>&mdash;</td><td><strong>PMS Bridge MCP</strong></td><td>Guest-stay context (tokenised), checkout time, folio posting, wake-up calls, late checkout, DND sync</td><td>IO-bound, external-latency-bound</td><td>Build adapters per PMS</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>&mdash;</td><td><strong>Knowledge MCP</strong></td><td>Property FAQ, amenity hours, policies, local recommendations; retrieval with citations</td><td>Read-heavy</td><td>Build (pgvector)</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>&mdash;</td><td><strong>Guest Preference MCP</strong></td><td>Opt-in cross-stay preferences, in-stay learned preferences; consent-gated; erasable</td><td>Light</td><td>Build</td><td><span class="pill p-new">New</span> &mdash; consent-gated, see &sect;55</td></tr>
+    <tr><td>&mdash;</td><td><strong>Notification MCP</strong></td><td>Staff push, escalation paging, guest SMS/app notification, on-screen device messages</td><td>Bursty</td><td>Build + Buy transport</td><td>Partially exists (FCM)</td></tr>
+    <tr><td>⑩</td><td><strong>Automation Adapters</strong></td><td>One per vendor. Capability&rarr;vendor command translation, connection management, verification reads, error normalisation</td><td>IO-bound, per-property connections</td><td>Build (one per vendor)</td><td><span class="pill p-new">New</span> as a clean abstraction</td></tr>
+    <tr><td>⑪</td><td><strong>Event Backbone</strong></td><td>Async fan-out for tickets, state changes, alerts, analytics, staff notification</td><td>Throughput</td><td>Buy (EventBridge/SQS)</td><td><span class="pill p-new">New</span></td></tr>
+    <tr><td>⑫</td><td><strong>Audit &amp; Trace Store</strong></td><td>Immutable per-turn decision records, WORM retention, search, replay, cost attribution</td><td>Write-heavy, append-only</td><td>Build on S3+OpenSearch</td><td><span class="pill p-new">New</span> &mdash; compliance-critical</td></tr>
+    <tr><td>&mdash;</td><td><strong>Tenant Admin &amp; Provisioning</strong></td><td>Property onboarding, device enrolment, capability manifest authoring, feature flags, kill switches</td><td>Light</td><td>Build</td><td><span class="pill p-new">New</span> (UI by the other workstream; API here)</td></tr>
+    <tr><td>&mdash;</td><td><strong>Eval &amp; Replay Harness</strong></td><td>Golden/adversarial suites, CI gates, production turn replay, regression detection</td><td>Batch</td><td>Build</td><td><span class="pill p-new">New</span> &mdash; see &sect;72</td></tr>
+  </tbody>
+</table>
+
+<h2>9. Trust and network zones</h2>
+
+<p>The zone boundaries in Figure 1 are the security architecture in miniature. Each crossing has a defined
+authentication mechanism, a defined direction, and a defined failure behaviour.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:8%">Crossing</th><th style="width:19%">From &rarr; To</th><th style="width:15%">Auth</th><th style="width:10%">Direction</th><th style="width:26%">If it fails</th><th style="width:22%">Key risk</th></tr></thead>
+  <tbody>
+    <tr><td>X1</td><td>Guest voice &rarr; Device</td><td>None (physical presence)</td><td>In</td><td>N/A</td><td>Anyone in the room can act. Mitigation: no T3+ action is available without an explicit confirmation, and no action can affect another room (P2).</td></tr>
+    <tr><td>X2</td><td>Device &rarr; Edge Gateway or Cloud</td><td>mTLS, per-device X.509 from a private CA</td><td>Outbound only</td><td>Device enters offline mode: local IR/relay fallback, on-screen notice</td><td>Device theft. Mitigation: cert bound to hardware keystore, revocable, scoped to one room.</td></tr>
+    <tr><td>X3</td><td>Edge Gateway &rarr; Cloud</td><td>mTLS + per-property identity</td><td>Outbound only, persistent tunnel</td><td>Edge runs autonomously on cached rules; queues tickets for replay</td><td>Compromised edge = one property. Mitigation: property-scoped credentials only.</td></tr>
+    <tr><td>X4</td><td>Edge Gateway &rarr; BMS head-end</td><td>Vendor-specific (often weak &mdash; assume it is)</td><td>LAN, bidirectional</td><td>Automation unavailable; agent says so and offers to call staff</td><td>The BMS is usually the weakest link. Mitigation: dedicated IoT VLAN, edge is the only speaker to it.</td></tr>
+    <tr><td>X5</td><td>Cloud &rarr; Vertex AI</td><td>Workload Identity Federation (no long-lived keys)</td><td>Outbound</td><td>Degraded mode: fast lane only (&sect;29)</td><td>Data egress and residency. Mitigation: regional endpoint pinning, no-train contract, redaction before send.</td></tr>
+    <tr><td>X6</td><td>Cloud &rarr; ASR/TTS vendor</td><td>API key in Secrets Manager, rotated</td><td>Outbound</td><td>Failover to secondary vendor; then text-only on-screen mode</td><td>Audio leaving the region. Mitigation: regional endpoints, zero-retention contract.</td></tr>
+    <tr><td>X7</td><td>Cloud &rarr; PMS</td><td>Per-property OAuth client / API cred, tenant-scoped</td><td>Outbound</td><td>Guest-context-free operation; folio posting queued or refused</td><td>Guest PII, folio. Mitigation: tokenised guest refs, no PAN ever, minimum scopes.</td></tr>
+    <tr><td>X8</td><td>Staff app &rarr; Cloud</td><td>OIDC, per-property staff identity, RBAC</td><td>Inbound (the only inbound path)</td><td>Staff fall back to existing hotel tooling</td><td>Privilege escalation across properties. Mitigation: RLS + tenant claim validation on every request.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">There is exactly one inbound path</div>
+  <p>X8 &mdash; the staff/admin API &mdash; is the only place where traffic originates outside Woohoo cloud and terminates
+  inside it. Devices, edge gateways and vendor systems are all <strong>outbound-only</strong>. This is not stylistic:
+  hotel IT will not open inbound firewall rules for a vendor, and if they would, you should not ask. Design accordingly
+  from the first line of code, because retrofitting outbound-only onto a system that assumed inbound polling is a
+  rewrite of the integration layer.</p>
+</div>
