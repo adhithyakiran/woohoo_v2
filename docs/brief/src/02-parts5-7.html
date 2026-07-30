@@ -1,0 +1,240 @@
+<h1 class="part"><span class="pn">Part V</span>What each team builds</h1>
+
+<p>This is the section your colleagues are in the room for. Give everyone the one-line version
+first, then go round the table.</p>
+
+<table>
+  <thead><tr><th style="width:20%">Team</th><th style="width:26%">You build</th><th style="width:28%">You talk to</th><th style="width:26%">Status of what you need</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Android / device</strong></td><td>Audio capture, wake word, endpointing, playback, screen</td><td><strong>WebSocket</strong> on our gateway</td><td><span class="pill p-done">Ready</span> Protocol is stable and documented</td></tr>
+    <tr><td><strong>Staff / admin UI</strong></td><td>Housekeeping and maintenance screens, property admin</td><td>An HTTP API on our service</td><td><span class="pill p-none">Not built</span> This is the gap &mdash; see below</td></tr>
+    <tr><td><strong>Ticketing / operations</strong></td><td>Push our requests into HotSOS, Quore, Alice, or your own queue</td><td>Our event stream, or we call your API</td><td><span class="pill p-part">Design agreed</span> Events exist internally; no external binding yet</td></tr>
+    <tr><td><strong>PMS integration</strong></td><td>Opera / Mews / Cloudbeds adapter</td><td>An adapter interface inside our service</td><td><span class="pill p-part">Interface defined</span> No implementation</td></tr>
+    <tr><td><strong>Automation vendors</strong></td><td>Honeywell, Interel, BACnet adapters</td><td>Our adapter contract</td><td><span class="pill p-part">Contract done</span> Only a simulator exists</td></tr>
+    <tr><td><strong>Infrastructure</strong></td><td>AWS deployment, CI/CD, monitoring</td><td>Docker images, Terraform modules</td><td><span class="pill p-part">Written</span> Never applied &mdash; no AWS credentials yet</td></tr>
+  </tbody>
+</table>
+
+<h2>Android / device team</h2>
+
+<p>You keep everything about sound. We keep everything about meaning.</p>
+
+<table>
+  <thead><tr><th style="width:50%">You own</th><th style="width:50%">We own</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Wake word (must stay on the device &mdash; no audio leaves the room until it fires), echo cancellation, detecting when the guest stopped speaking, speaker playback, screen rendering, offline fallback</td>
+      <td>Understanding, deciding, authorising, talking to the hotel's systems, and the wording of every reply</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The whole integration</h3>
+<pre>connect once, keep it open:   ws://gateway:8443
+
+send  { "type":"hello", "deviceId":"d_412a" }
+recv  { "type":"ready", "property":"…", "room":"412", "assistantName":"Voice Genie" }
+
+send  { "type":"turn", "transcript":"turn on the lights", "asrConfidence":0.94 }
+recv  { "type":"ack",   "filledPause":"Let me sort that—" }     ← play immediately
+recv  { "type":"speak", "text":"Done.", "turnId":"turn_…" }     ← then this
+recv  { "type":"screen","text":"…" }                            ← optional</pre>
+
+<div class="box note">
+  <div class="bt">Three things to tell them explicitly</div>
+  <ul>
+    <li><strong>One connection per device, kept open.</strong> Not one per request. Opening a
+    connection each turn adds a third of a second to every interaction.</li>
+    <li><strong>Play <code>ack</code> the moment it arrives.</strong> It comes back before the real
+    answer. That's what makes the device feel instant even when the AI is thinking. Getting this
+    wrong makes a good system feel slow.</li>
+    <li><strong>Send the real ASR confidence.</strong> Below 0.6 we ask the guest to repeat instead
+    of guessing at an action. If you hardcode it, we guess when we shouldn't.</li>
+  </ul>
+</div>
+
+<div class="box warn">
+  <div class="bt">And one change that isn't optional</div>
+  <p>The current app ships Google and AWS credentials and calls speech recognition directly. Those
+  have to come out. Once the app talks to us instead, a stolen device yields nothing but a
+  certificate we can revoke &mdash; and we can change speech vendor or tune accuracy without
+  shipping a new APK.</p>
+</div>
+
+<h2>Staff / admin UI team &mdash; read this first</h2>
+
+<div class="box warn">
+  <div class="bt">There is nothing for you to call yet. Say this plainly.</div>
+  <p>The logic exists and is tested &mdash; listing open requests, acknowledging escalations,
+  searching what the assistant did, switching capabilities off. But <strong>none of it is exposed
+  over HTTP, and there is no login</strong>. If the UI starts next sprint, this API is the blocker.</p>
+</div>
+
+<p>What needs building, roughly a week of work:</p>
+<table>
+  <thead><tr><th style="width:26%">Surface</th><th>What it gives the UI</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Staff tasks</strong></td><td>List, assign and complete service requests; acknowledge escalations; see SLA timers</td></tr>
+    <tr><td><strong>Property admin</strong></td><td>Rooms, devices, room types, and the capability config that decides what the assistant can do</td></tr>
+    <tr><td><strong>Operations</strong></td><td>Search what the assistant did and why; switch a capability off across a property in seconds</td></tr>
+    <tr><td><strong>Live events</strong></td><td>A stream so a housekeeping tablet buzzes the moment a request is raised, without polling</td></tr>
+    <tr><td><strong>Login &amp; permissions</strong></td><td>Staff sign-in, scoped per property. This is the only way into our system from outside, so it gets the most scrutiny.</td></tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;Before I build it I need two answers from the UI team: REST or GraphQL, and
+  which login provider we're standardising on. Both change the shape enough that I'd rather not
+  guess.&rdquo;</p>
+</div>
+
+<h2>Ticketing and operations team</h2>
+
+<p>The important question is not technical.</p>
+
+<div class="box say">
+  <div class="bt">Ask the room</div>
+  <p class="q">&ldquo;Do our hotels want maintenance tickets inside Woohoo, or pushed into the
+  system they already use? Because most hotels already run HotSOS or Quore, and no hotel wants a
+  second queue for their staff to watch.&rdquo;</p>
+</div>
+
+<p>We produce a well-described event every time something happens &mdash; a request raised, an
+order placed, an emergency escalated, a device going offline. Consuming it means receiving a small
+JSON message. The design supports either direction: we can hold the tickets, or we can push them
+to you and hold nothing.</p>
+
+<h2>Automation and PMS teams</h2>
+
+<p>Both work the same way: you implement a small interface, and nothing above it changes.</p>
+
+<pre>connect(property)          <span class="c">// open a session with that hotel's system</span>
+readRoomState(room)        <span class="c">// what is the room doing right now</span>
+applyCapability(room, op)  <span class="c">// "set the bedroom to 23" — vendor-neutral in, result out</span>
+health()                   <span class="c">// are you reachable</span>
+conformanceSuite()         <span class="c">// prove it works before a property goes live</span></pre>
+
+<div class="box info">
+  <div class="bt">The rule that keeps this clean</div>
+  <p>Vendor language stops at the adapter. Nothing above it may mention Honeywell, Interel, BACnet
+  objects or KNX group addresses. Your adapter receives &ldquo;set the bedroom setpoint to
+  23&rdquo; and translates it. If a room's curtain motor is open/close only, <em>your adapter</em>
+  handles a request for 40% &mdash; the AI never learns the difference.</p>
+  <p>There is a full simulator, so you can build and test your adapter with no hotel hardware
+  at all. It even fakes the awkward cases: slow responses, dropped connections, and writes that
+  acknowledge but don't actually take effect.</p>
+</div>
+
+<div class="box warn">
+  <div class="bt">One thing the automation team must plan for</div>
+  <p>These systems live inside the hotel, behind the hotel's firewall, with no route from the
+  internet &mdash; and hotel IT will not open one. So we need a small appliance on site that
+  connects <em>outward</em> to us. It also means the lights still work when the hotel's internet
+  drops, which happens more than anyone likes. That appliance is real hardware to buy, ship
+  and support, and it should be in someone's plan.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VI</span>Where we actually are</h1>
+
+<p>Be straight about this. It builds far more credibility than claiming completeness, and
+everyone finds out anyway.</p>
+
+<table>
+  <thead><tr><th style="width:32%">Component</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Understanding &amp; deciding</td><td><span class="pill p-done">Working</span></td><td>Runs end to end on a laptop. 93 automated tests.</td></tr>
+    <tr><td>Safety &amp; policy</td><td><span class="pill p-done">Working</span></td><td>27 dedicated tests plus 14 that actively try to break it.</td></tr>
+    <tr><td>Capability / config model</td><td><span class="pill p-done">Working</span></td><td>Demonstrated live in Act 3.</td></tr>
+    <tr><td>Device connection</td><td><span class="pill p-done">Working</span></td><td>WebSocket plus an HTTP endpoint for testing.</td></tr>
+    <tr><td>On-site appliance</td><td><span class="pill p-done">Working</span></td><td>Including keeping the room working when the internet is down.</td></tr>
+    <tr><td>Speech in and out</td><td><span class="pill p-none">Not built</span></td><td>We take text today. Needs vendor accounts and real hotel recordings to choose properly.</td></tr>
+    <tr><td>Android app changes</td><td><span class="pill p-none">Not started</span></td><td>Credential removal is the priority item.</td></tr>
+    <tr><td>Real vendor adapters</td><td><span class="pill p-none">Simulator only</span></td><td>Needs vendor documentation and lab hardware.</td></tr>
+    <tr><td>PMS integration</td><td><span class="pill p-none">Not built</span></td><td>Interface defined, no implementation.</td></tr>
+    <tr><td>Staff / admin API</td><td><span class="pill p-none">Not built</span></td><td>Blocks the UI team.</td></tr>
+    <tr><td>Database</td><td><span class="pill p-part">Schema only</span></td><td>Runs in memory today; swapping it in is a small change by design.</td></tr>
+    <tr><td>AWS deployment</td><td><span class="pill p-part">Written</span></td><td>Never run &mdash; no AWS access yet.</td></tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;The thinking half is real and tested. The connecting half &mdash; speech, the
+  real hotel systems, the admin screens &mdash; is mostly still to build, and most of it is blocked
+  on things I can't get on my own: vendor documentation, hardware, and API credentials.&rdquo;</p>
+</div>
+
+<h2>What it will cost to run</h2>
+
+<p>If someone asks about cost, the number is small and that is worth saying clearly.</p>
+
+<table>
+  <thead><tr><th style="width:40%">At</th><th style="width:30%">Cloud + AI cost</th><th style="width:30%">Per room per month</th></tr></thead>
+  <tbody>
+    <tr><td>50 hotels &middot; 10,000 rooms</td><td>~$5,200 / month</td><td><strong>~$0.52</strong></td></tr>
+    <tr><td>500 hotels &middot; 100,000 rooms</td><td>~$49,000 / month</td><td><strong>~$0.49</strong></td></tr>
+  </tbody>
+</table>
+
+<p class="small">Planning estimates, not quotes. The single biggest uncertainty is how often guests
+actually talk to the device &mdash; we assumed six times a day per occupied room, and the whole
+model moves with that number. It is the first thing we should measure at the pilot.</p>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;Technology cost isn't what constrains this business &mdash; it's about fifty
+  cents per room per month. Hardware, installation and sales are the real costs. That means we
+  should spend our engineering effort on reliability and onboarding speed, not on shaving AI
+  bills.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VII</span>Questions you'll get, and decisions you need</h1>
+
+<h2>Likely questions</h2>
+
+<table>
+  <thead><tr><th style="width:34%">Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td><em>What if the AI does something wrong?</em></td><td>It can't act. It proposes; a separate component authorises. The worst case if it's completely fooled is an odd sentence or a light change in the caller's own room.</td></tr>
+    <tr><td><em>What if someone tries to trick it?</em></td><td>They will &mdash; some will film it. We have 14 tests that actively attempt it, and they must all pass before any release. The defence isn't clever wording, it's that the deciding component never reads what the guest said.</td></tr>
+    <tr><td><em>Can it hear us all the time?</em></td><td>No. Nothing leaves the room until the wake word fires, and that runs on the device. We never store recordings anywhere &mdash; audio exists only while it's being transcribed.</td></tr>
+    <tr><td><em>What happens when the internet drops?</em></td><td>The on-site appliance keeps lights, temperature and do-not-disturb working, the device says it's offline, and requests are queued and sent when it comes back.</td></tr>
+    <tr><td><em>What if the AI provider goes down?</em></td><td>We fall back to handling the common requests without AI and tell the guest what still works. The route to a human always stays open.</td></tr>
+    <tr><td><em>Can it unlock the door?</em></td><td>No, deliberately, and we should keep saying no. A voice can't tell a guest apart from a stranger standing in the room.</td></tr>
+    <tr><td><em>How long to add a hotel?</em></td><td>Target is five working days once the adapter for their vendor exists &mdash; it's a config file and an appliance. The first hotel on a new vendor takes longer because we build that adapter.</td></tr>
+    <tr><td><em>Is guest data safe?</em></td><td>We don't keep recordings, we mask personal details before anything is stored, card numbers are blocked outright, and each region's data stays in its region.</td></tr>
+    <tr><td><em>Why not just use ChatGPT/Gemini directly?</em></td><td>That's the easy 20%. The other 80% is making sure it can only ever act on the right room, within limits, with a record of why &mdash; and that's what we built.</td></tr>
+  </tbody>
+</table>
+
+<h2>Decisions to leave with</h2>
+
+<p>Close by asking for these. It turns a status update into a working meeting.</p>
+
+<div class="step"><div class="n">1</div><div class="t"><b>Which hotel is the pilot, and which automation vendor does it run?</b>
+This decides which adapter gets built first, and it's the longest lead time we have.</div></div>
+
+<div class="step"><div class="n">2</div><div class="t"><b>Does the UI team need the admin API this sprint?</b>
+If yes, it's about a week and I need to know REST or GraphQL, and which login provider.</div></div>
+
+<div class="step"><div class="n">3</div><div class="t"><b>Do hotels want tickets in our system or theirs?</b>
+This changes whether we're building a product or an integration, and it's a question for sales as much as engineering.</div></div>
+
+<div class="step"><div class="n">4</div><div class="t"><b>Who's getting us AWS access, vendor documentation and PMS credentials?</b>
+Most of what's unbuilt is blocked on these rather than on engineering time.</div></div>
+
+<hr class="soft">
+
+<div class="box good">
+  <div class="bt">If you remember one line from this meeting</div>
+  <p class="big" style="margin:0">The AI proposes. The platform decides. Everything else is detail.</p>
+</div>
+
+<p class="small" style="text-align:center;margin-top:10mm;">
+Woohoo V2 Team Briefing &middot; Demo output captured from a live run &middot;
+Deeper detail: <code>docs/architecture/</code> (design) and <code>docs/api/</code> (integration).
+</p>
+
+</body>
+</html>

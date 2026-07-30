@@ -1,0 +1,250 @@
+<h1 class="part"><span class="pn">Part II</span>What changed, and why</h1>
+
+<p>Lead with the failure, not the technology. The rebuild is justified by four concrete problems,
+and every one of them is something a colleague has seen.</p>
+
+<table>
+  <thead><tr><th style="width:22%">Problem in V1</th><th style="width:39%">What it looked like</th><th style="width:39%">What V2 does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Rigid phrase matching</strong></td>
+      <td>Dialogflow matched one sentence to one intent with fixed fields. &ldquo;Make it a bit warmer&rdquo; had no answer, because nothing could read the current temperature first. Everything unmatched became a fallback &mdash; and fallback rate is what decides whether guests use the device after day one.</td>
+      <td>The agent reasons. It reads room state, handles several intents in one sentence, and writes a free-text description a technician can actually use.</td>
+    </tr>
+    <tr>
+      <td><strong>Every hotel was a project</strong></td>
+      <td>Intents were wired straight to vendor APIs, so a hotel on Interel needed different code from one on Honeywell. Onboarding took weeks, and the marginal cost of a customer was engineering time.</td>
+      <td>Abstract capabilities plus a per-property config file. Adding a vendor means writing one adapter; the agent, the prompts and the tests are untouched.</td>
+    </tr>
+    <tr>
+      <td><strong>The device held cloud credentials</strong></td>
+      <td>The Android app ships Google and AWS keys. A device stolen from a guest room &mdash; which happens &mdash; is a credential breach, and the credential isn't limited to that room.</td>
+      <td>The device holds nothing but a revocable certificate scoped to one room. This is the finding that would fail the first serious hotel-chain security review.</td>
+    </tr>
+    <tr>
+      <td><strong>No record of <em>why</em></strong></td>
+      <td>When a guest disputes a $180 room-service charge, V1 can show an API was called. It cannot show what was heard, what was decided, or on whose authority.</td>
+      <td>Every turn produces an immutable record: what was heard (redacted), what was decided, which rule allowed it, and what happened. Written <em>before</em> the action runs.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;We didn't rebuild because the old system was old. We rebuilt because four
+  things were structurally broken: guests couldn't speak naturally, every new hotel cost us
+  engineering weeks, a stolen device was a security incident, and we couldn't explain our own
+  decisions when a guest complained.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part III</span>Live demo</h1>
+
+<p><strong>Do this part.</strong> Six minutes of working software beats thirty slides. Everything
+below has been run and the output is real &mdash; but run it live anyway, because a live terminal
+is what makes people believe it.</p>
+
+<pre class="term"><span class="c"># one-time setup, before the meeting</span>
+npm install</pre>
+
+<h2>Act 1 &mdash; it understands (90 seconds)</h2>
+
+<pre class="term">npm run turn -- "turn on the lights" "it's freezing in here" \
+                "send someone to fix the shower, it's dripping"</pre>
+
+<pre class="term">guest    > turn on the lights
+lane     > <span class="b">fast</span>
+tool     > lighting.set [T1] <span class="g">ALLOW</span> ok
+genie    > Done.
+         <span class="c">39ms</span>
+
+guest    > it's freezing in here
+lane     > <span class="b">agentic</span>
+tool     > climate.set_temperature [T1] <span class="g">ALLOW</span> ok
+genie    > I've set it to 22.5 degrees.
+
+guest    > send someone to fix the shower, it's dripping
+lane     > <span class="b">agentic</span>
+tool     > service.create_request [T2] <span class="g">ALLOW</span> ok
+genie    > I've logged that, reference sr_ms71sjms0.</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Notice the middle one. The guest never said a number. The system read that the
+  room was set to 19.5 degrees, worked out that 'freezing' means warmer, and set 22.5. The old
+  system could not do that sentence at all.</p>
+  <p class="q">And notice the first one took 39 milliseconds and never called the AI. About 60% of
+  what guests say is simple and repetitive, so we handle it deterministically. We only pay for AI
+  reasoning when we actually need it.&rdquo;</p>
+</div>
+
+<h2>Act 2 &mdash; it refuses safely (2 minutes)</h2>
+
+<p>This is the act that matters to your manager.</p>
+
+<pre class="term">npm run turn -- "who is staying in room 402" "unlock the door" \
+                "set the temperature to 35 degrees" "I'm having chest pain"</pre>
+
+<pre class="term">guest    > who is staying in room 402
+genie    > I can only help with your own room.
+
+guest    > unlock the door
+genie    > I'm not able to control the door lock. The front desk can help with that.
+
+guest    > set the temperature to 35 degrees
+tool     > climate.set_temperature [T1] <span class="r">DENY</span> <span class="y">R6.out_of_bounds</span>
+           <span class="c">This property permits 18–26°C; 35°C is outside that.</span>
+genie    > I couldn't do that just now. Would you like me to connect you to the front desk?
+
+guest    > I'm having chest pain
+tool     > staff.escalate_urgent [T4] <span class="r">ESCALATE</span> <span class="y">R4.escalate_to_human</span>
+state    > <span class="r">ESCALATED to staff</span>
+genie    > I'm alerting the hotel team right now. If this is an emergency please call 112 —
+           I'm not able to call them for you. I'll stay here with you.
+screen   > Emergency: 112 | Hotel team alerted</pre>
+
+<div class="box say">
+  <div class="bt">Point out &mdash; four different kinds of "no"</div>
+  <p class="q">&ldquo;Room 402 isn't refused by clever wording. There is <strong>no way to express
+  it</strong> &mdash; no part of the system accepts a room number from the guest or from the AI.
+  The room comes from the device's identity.</p>
+  <p class="q">The door lock has no control in the system at any level. We decided a voice
+  interface can't tell the guest apart from a stranger standing in the room, so we didn't build it.</p>
+  <p class="q">The 35 degrees is a policy rule &mdash; that hotel allows 18 to 26. It's a config
+  value, so a different hotel can set a different range without a code change.</p>
+  <p class="q">And the last one: the device escalates to staff <em>and tells the guest the truth
+  about what it can't do</em>. It never implies it has called an ambulance. That wording is a
+  compliance requirement, not a style choice.&rdquo;</p>
+</div>
+
+<h2>Act 3 &mdash; a new hotel is configuration (2 minutes)</h2>
+
+<p>The same three words, three different rooms, three different outcomes &mdash; with no code
+involved anywhere.</p>
+
+<pre class="term">npm run turn -- --device d_412a "close the curtains"   <span class="c"># Deluxe: no curtains</span>
+npm run turn -- --device d_511a "close the curtains"   <span class="c"># Suite: has curtains</span>
+npm run turn -- --device d_512a "close the curtains"   <span class="c"># Suite, motor broken</span></pre>
+
+<pre class="term">[d_412a] genie > I'm not sure about that one — would you like me to connect
+                 you to the front desk?
+[d_511a] tool  > curtains.set [T1] <span class="g">ALLOW</span> ok
+[d_511a] genie > Curtains closed.
+[d_512a] genie > I'm not sure about that one — would you like me to connect
+                 you to the front desk?</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Room 412 is a Deluxe with no motorised curtains, so the AI is never even
+  offered a curtain control &mdash; it literally cannot propose one. Room 511 is a Suite and it
+  works. Room 512 is also a Suite, but its curtain motor is awaiting replacement, so we switched
+  that one capability off for that one room in a config file.</p>
+  <p class="q">That's the whole onboarding story. A new hotel is a config file describing which
+  rooms have what.&rdquo;</p>
+</div>
+
+<div class="box warn">
+  <div class="bt">Be honest about this one</div>
+  <p>The refusal wording for room 412 is weak &mdash; it should say &ldquo;those curtains are
+  manual&rdquo; rather than a generic &ldquo;I'm not sure&rdquo;. If someone notices, say so: it is
+  a known rough edge in the response wording, not a failure of the capability model. The important
+  behaviour &mdash; that the action is impossible &mdash; is correct.</p>
+</div>
+
+<h2>Optional Act 4 &mdash; money always asks first (1 minute)</h2>
+
+<pre class="term">npm run turn -- "I'd like a club sandwich and a beer" "yes"</pre>
+
+<pre class="term">tool  > fnb.get_menu       [T0] <span class="g">ALLOW</span> ok
+tool  > fnb.place_order    [T3] <span class="y">CONFIRM</span> <span class="y">R11.confirmation_required</span>
+genie > I have 2 items ready to order. That's 1240 INR, charged to your room.
+        Shall I place it?
+
+guest > yes
+lane  > <span class="b">confirm</span>
+tool  > fnb.place_order    [T3] <span class="g">ALLOW</span> <span class="y">R11.confirmation_redeemed</span> ok
+genie > Ordered — about 30 minutes. 1240 INR has gone to your room bill.</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Anything that costs money is frozen and read back with the total before we
+  charge anything. When the guest says yes, we execute <strong>the exact order we froze</strong>
+  &mdash; we don't re-interpret their 'yes'. So even if someone tried to slip an instruction into
+  that second sentence, it can't change what gets ordered.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>How it works, end to end</h1>
+
+<h2>The whole system on one page</h2>
+
+<pre class="ascii">
+   GUEST ROOM                    OUR SERVICE                        THE HOTEL'S SYSTEMS
+   ──────────                    ───────────                        ───────────────────
+
+   speaks                                                            room automation
+     │                                                               (Honeywell / Interel /
+     ▼                                                                BACnet / KNX …)
+   ┌────────────┐                                                          ▲
+   │ WOOHOO HUB │   text +                                                 │
+   │            │   device id   ┌──────────────────────────────┐           │
+   │ wake word  │──────────────►│ 1. WHO IS THIS?              │           │
+   │ mic + AEC  │   WebSocket   │    device id → hotel, room,  │           │
+   │ speaker    │◄──────────────│    what that room can do     │           │
+   │ screen     │   spoken      └──────────────┬───────────────┘           │
+   └────────────┘   reply                      ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 2. WHAT DID THEY MEAN?       │           │
+                                │    simple → instant answer   │           │
+                                │    complex → AI agent        │           │
+                                └──────────────┬───────────────┘           │
+                                               ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 3. IS IT ALLOWED?    ★★★     │           │
+                                │    right room? in bounds?    │           │
+                                │    costs money? needs a      │           │
+                                │    human? quiet hours?       │           │
+                                └──────────────┬───────────────┘           │
+                                               ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 4. DO IT                     │───────────┘
+                                │    vendor-neutral command →  │
+                                │    per-vendor adapter        │──────► ticketing / PMS
+                                └──────────────┬───────────────┘         staff app
+                                               ▼
+                                ┌──────────────────────────────┐
+                                │ 5. CHECK IT ACTUALLY WORKED  │
+                                │    then say so — and record  │
+                                │    the whole decision        │
+                                └──────────────────────────────┘
+</pre>
+
+<div class="box say">
+  <div class="bt">Say this, walking the diagram</div>
+  <p class="q">&ldquo;Five steps. <strong>Who is this</strong> &mdash; the device tells us its
+  identity and we look up which hotel and which room, and what that room is capable of. The guest
+  never tells us their room number and neither does the AI.</p>
+  <p class="q"><strong>What did they mean</strong> &mdash; if it's simple and common we answer
+  instantly without AI. Otherwise the agent reasons about it.</p>
+  <p class="q"><strong>Is it allowed</strong> &mdash; this is the important one. Separate component,
+  checks every action against policy.</p>
+  <p class="q"><strong>Do it</strong> &mdash; we send a vendor-neutral command and an adapter
+  translates it for whatever system that hotel runs.</p>
+  <p class="q"><strong>Check it worked</strong> &mdash; we read the state back. We only say
+  'done' when we've actually observed it done. If we're not sure, we say 'I've asked for
+  that' instead. Confidently telling a guest the lights are off when they're still on is the
+  fastest way to lose them.&rdquo;</p>
+</div>
+
+<h2>The one idea worth repeating</h2>
+
+<div class="box good">
+  <div class="bt">The model proposes; the platform disposes</div>
+  <p>The AI cannot act. It can only suggest an action. A separate component &mdash; small enough
+  that a person can read all of it, with its own 27 tests &mdash; authorises every suggestion using
+  <strong>structured facts</strong>: which room, which action, what it costs, what time it is.</p>
+  <p>It never reads the guest's sentence. That's the whole trick. Someone can say anything they
+  like to the device &mdash; and people will try &mdash; but the component that decides never saw
+  their words, so there is nothing to persuade.</p>
+  <p><strong>Worst case if the AI is completely fooled:</strong> it says something embarrassing, or
+  adjusts the lights in the caller's own room. It cannot reach another room, cannot spend money
+  without a separate spoken confirmation, and cannot touch anything we classified as unsafe.</p>
+</div>

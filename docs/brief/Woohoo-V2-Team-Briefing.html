@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — Team Briefing</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:17mm 16mm 15mm 16mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:10.4pt;line-height:1.6;color:var(--ink);margin:0;}
+p{margin:0 0 8pt;}
+strong{font-weight:650;}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:9.2pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:23pt;font-weight:300;color:var(--navy);margin:0 0 5mm;padding-bottom:4mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:8.5pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:14pt;font-weight:600;color:var(--navy);margin:9mm 0 3.5mm;padding-left:4mm;border-left:4px solid var(--accent);page-break-after:avoid;}
+h3{font-size:11.5pt;font-weight:650;color:var(--navy2);margin:6mm 0 2.5mm;page-break-after:avoid;}
+ul,ol{margin:0 0 8pt;padding-left:18px;} li{margin-bottom:3.5pt;}
+table{width:100%;border-collapse:collapse;margin:4mm 0 7mm;font-size:9pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:5px 7px;font-weight:600;font-size:8.4pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:5px 7px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:8.4pt;}
+.box{border:1px solid var(--line);border-left:4.5px solid var(--navy);background:var(--grey-l);padding:4.5mm 5.5mm;margin:5mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.8pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2.5mm;}
+.box p:last-child,.box ul:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+.box.say{border-left-color:var(--violet);background:var(--violet-l);} .box.say .bt{color:var(--violet);}
+.say .q{font-size:11pt;line-height:1.62;color:#2c2340;font-style:italic;}
+pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.9pt;line-height:1.45;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:4mm;margin:3.5mm 0 6mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.ascii{font-size:7pt;line-height:1.3;}
+pre.term{background:#131c27;color:#cfe0ee;border-color:#131c27;font-size:8pt;}
+pre .c{color:#7d94a8;}
+pre .g{color:#7ddc9a;} pre .r{color:#f08a8a;} pre .y{color:#e8c87a;} pre .b{color:#8ab6e8;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#0e1b2b 0%,#16283f 45%,#22405f 100%);color:#fff;padding:30mm 24mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9.5pt;letter-spacing:.34em;text-transform:uppercase;color:#c9a44e;font-weight:600;}
+.cover h1{font-size:40pt;line-height:1.05;margin:16mm 0 0;font-weight:300;letter-spacing:-.6pt;}
+.cover h1 b{font-weight:650;display:block;color:#e8c87a;}
+.cover .sub{font-size:13pt;color:#b9c8da;margin-top:10mm;font-weight:300;line-height:1.55;max-width:140mm;}
+.cover .rule{width:56mm;height:3px;background:#c9a44e;margin:12mm 0;}
+.cover .meta{position:absolute;bottom:28mm;left:24mm;right:24mm;font-size:9pt;color:#9fb2c7;display:grid;grid-template-columns:repeat(3,1fr);gap:7mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#e8c87a;font-size:7.6pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.pill{display:inline-block;font-size:7.2pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:1mm 2.2mm;border-radius:2.5px;margin-right:3px;}
+.p-done{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-part{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.p-none{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.small{font-size:8.6pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:7mm 0;}
+.big{font-size:15pt;line-height:1.5;font-weight:300;color:var(--navy2);margin:5mm 0;}
+.step{display:grid;grid-template-columns:11mm 1fr;gap:4mm;margin-bottom:4.5mm;page-break-inside:avoid;}
+.step .n{background:var(--navy);color:#fff;border-radius:50%;width:9mm;height:9mm;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10pt;}
+.step .t{padding-top:.8mm;}
+.step .t b{color:var(--navy);}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>Woohoo V2<b>Team Briefing</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    What we built, how it works end to end, and exactly what each team needs
+    in order to build against it.
+  </div>
+  <div class="meta">
+    <div><b>Audience</b>Engineering &amp; management</div>
+    <div><b>Format</b>30 minutes + live demo</div>
+    <div><b>Status</b>Backend working, integration surfaces defined</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">How to use this</span>Running the meeting</h1>
+
+<p>This document is a <strong>script, not a reference</strong>. It is written to be read aloud and
+followed in order. The two longer documents &mdash; the architecture design and the API reference
+&mdash; are for people who want depth afterwards; do not present from them.</p>
+
+<h3>Suggested 30 minutes</h3>
+<table>
+  <thead><tr><th style="width:12%">Time</th><th style="width:30%">Section</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><strong>0&ndash;2 min</strong></td><td>Part I &mdash; the one-minute version</td><td>Everyone leaves knowing what it is, even if they hear nothing else</td></tr>
+    <tr><td><strong>2&ndash;6 min</strong></td><td>Part II &mdash; what changed and why</td><td>Justifies the rebuild. This is the part your manager cares about</td></tr>
+    <tr><td><strong>6&ndash;12 min</strong></td><td>Part III &mdash; <strong>live demo</strong></td><td>The most persuasive six minutes. Do not skip it</td></tr>
+    <tr><td><strong>12&ndash;18 min</strong></td><td>Part IV &mdash; how it works end to end</td><td>One diagram, one walkthrough</td></tr>
+    <tr><td><strong>18&ndash;26 min</strong></td><td>Part V &mdash; what each team builds</td><td>The reason your colleagues are in the room</td></tr>
+    <tr><td><strong>26&ndash;30 min</strong></td><td>Parts VI&ndash;VII &mdash; status and decisions</td><td>Honest gaps, and the four questions you need answered</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">Set up before the meeting</div>
+  <p>Open a terminal in the repo and run <code>npm install</code> once. Have
+  <code>npm run turn</code> ready to type. The demo needs <strong>no API key, no database and no
+  internet</strong> &mdash; it runs entirely on a laptop, which is itself worth mentioning.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part I</span>The one-minute version</h1>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;A guest in a hotel room says something out loud. We turn that into an
+  action &mdash; adjusting their lights or temperature, raising a maintenance ticket, ordering
+  food &mdash; and we say something back.</p>
+  <p class="q">The old system matched what the guest said against a fixed list of phrases. If the
+  phrase wasn't on the list, it failed. The new system uses an AI agent that actually reasons about
+  the request, can read the current state of the room before deciding, and can handle two requests
+  in one sentence.</p>
+  <p class="q">The important part is not the AI. It's that the AI is <strong>not allowed to do
+  anything on its own</strong>. It proposes an action; a separate component that never reads the
+  guest's words decides whether that action is permitted. That's what makes it safe to put in
+  forty thousand bedrooms.&rdquo;</p>
+</div>
+
+<h2>The three sentences that matter most</h2>
+
+<div class="step"><div class="n">1</div><div class="t"><b>It understands, instead of matching.</b>
+&ldquo;It's freezing in here and can you fix the shower&rdquo; is two requests, one of which needs
+a free-text description. The old system fails on that sentence. The new one reads the current
+temperature, works out the target, and raises the ticket.</div></div>
+
+<div class="step"><div class="n">2</div><div class="t"><b>A new hotel is configuration, not code.</b>
+Every hotel uses a different room-automation vendor. We built an abstraction so the agent knows
+about &ldquo;a thermostat with a temperature range&rdquo; and never about Honeywell or Interel.
+Onboarding a property becomes a config file, not an engineering project.</div></div>
+
+<div class="step"><div class="n">3</div><div class="t"><b>The AI proposes; the platform decides.</b>
+Every single action passes through a policy component that checks which room you're in, whether
+the action is permitted there, whether it costs money, and whether it needs the guest to confirm
+out loud. That component never reads the guest's words &mdash; so no matter what someone says to
+the device, they cannot talk it into doing something it isn't allowed to do.</div></div>
+
+<div class="box info">
+  <div class="bt">If your manager asks only one question, it will be this</div>
+  <p><em>&ldquo;What stops the AI doing something stupid or expensive?&rdquo;</em></p>
+  <p>Answer: <strong>the AI has no ability to act.</strong> It can only suggest. A separate,
+  small, independently tested component authorises every action, and it decides using structured
+  data &mdash; which room, which tool, what it costs &mdash; not the guest's sentence. We have
+  93 automated tests, including 14 that specifically try to trick the system, and they run on
+  every code change. A failure blocks the release.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part II</span>What changed, and why</h1>
+
+<p>Lead with the failure, not the technology. The rebuild is justified by four concrete problems,
+and every one of them is something a colleague has seen.</p>
+
+<table>
+  <thead><tr><th style="width:22%">Problem in V1</th><th style="width:39%">What it looked like</th><th style="width:39%">What V2 does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Rigid phrase matching</strong></td>
+      <td>Dialogflow matched one sentence to one intent with fixed fields. &ldquo;Make it a bit warmer&rdquo; had no answer, because nothing could read the current temperature first. Everything unmatched became a fallback &mdash; and fallback rate is what decides whether guests use the device after day one.</td>
+      <td>The agent reasons. It reads room state, handles several intents in one sentence, and writes a free-text description a technician can actually use.</td>
+    </tr>
+    <tr>
+      <td><strong>Every hotel was a project</strong></td>
+      <td>Intents were wired straight to vendor APIs, so a hotel on Interel needed different code from one on Honeywell. Onboarding took weeks, and the marginal cost of a customer was engineering time.</td>
+      <td>Abstract capabilities plus a per-property config file. Adding a vendor means writing one adapter; the agent, the prompts and the tests are untouched.</td>
+    </tr>
+    <tr>
+      <td><strong>The device held cloud credentials</strong></td>
+      <td>The Android app ships Google and AWS keys. A device stolen from a guest room &mdash; which happens &mdash; is a credential breach, and the credential isn't limited to that room.</td>
+      <td>The device holds nothing but a revocable certificate scoped to one room. This is the finding that would fail the first serious hotel-chain security review.</td>
+    </tr>
+    <tr>
+      <td><strong>No record of <em>why</em></strong></td>
+      <td>When a guest disputes a $180 room-service charge, V1 can show an API was called. It cannot show what was heard, what was decided, or on whose authority.</td>
+      <td>Every turn produces an immutable record: what was heard (redacted), what was decided, which rule allowed it, and what happened. Written <em>before</em> the action runs.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;We didn't rebuild because the old system was old. We rebuilt because four
+  things were structurally broken: guests couldn't speak naturally, every new hotel cost us
+  engineering weeks, a stolen device was a security incident, and we couldn't explain our own
+  decisions when a guest complained.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part III</span>Live demo</h1>
+
+<p><strong>Do this part.</strong> Six minutes of working software beats thirty slides. Everything
+below has been run and the output is real &mdash; but run it live anyway, because a live terminal
+is what makes people believe it.</p>
+
+<pre class="term"><span class="c"># one-time setup, before the meeting</span>
+npm install</pre>
+
+<h2>Act 1 &mdash; it understands (90 seconds)</h2>
+
+<pre class="term">npm run turn -- "turn on the lights" "it's freezing in here" \
+                "send someone to fix the shower, it's dripping"</pre>
+
+<pre class="term">guest    > turn on the lights
+lane     > <span class="b">fast</span>
+tool     > lighting.set [T1] <span class="g">ALLOW</span> ok
+genie    > Done.
+         <span class="c">39ms</span>
+
+guest    > it's freezing in here
+lane     > <span class="b">agentic</span>
+tool     > climate.set_temperature [T1] <span class="g">ALLOW</span> ok
+genie    > I've set it to 22.5 degrees.
+
+guest    > send someone to fix the shower, it's dripping
+lane     > <span class="b">agentic</span>
+tool     > service.create_request [T2] <span class="g">ALLOW</span> ok
+genie    > I've logged that, reference sr_ms71sjms0.</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Notice the middle one. The guest never said a number. The system read that the
+  room was set to 19.5 degrees, worked out that 'freezing' means warmer, and set 22.5. The old
+  system could not do that sentence at all.</p>
+  <p class="q">And notice the first one took 39 milliseconds and never called the AI. About 60% of
+  what guests say is simple and repetitive, so we handle it deterministically. We only pay for AI
+  reasoning when we actually need it.&rdquo;</p>
+</div>
+
+<h2>Act 2 &mdash; it refuses safely (2 minutes)</h2>
+
+<p>This is the act that matters to your manager.</p>
+
+<pre class="term">npm run turn -- "who is staying in room 402" "unlock the door" \
+                "set the temperature to 35 degrees" "I'm having chest pain"</pre>
+
+<pre class="term">guest    > who is staying in room 402
+genie    > I can only help with your own room.
+
+guest    > unlock the door
+genie    > I'm not able to control the door lock. The front desk can help with that.
+
+guest    > set the temperature to 35 degrees
+tool     > climate.set_temperature [T1] <span class="r">DENY</span> <span class="y">R6.out_of_bounds</span>
+           <span class="c">This property permits 18–26°C; 35°C is outside that.</span>
+genie    > I couldn't do that just now. Would you like me to connect you to the front desk?
+
+guest    > I'm having chest pain
+tool     > staff.escalate_urgent [T4] <span class="r">ESCALATE</span> <span class="y">R4.escalate_to_human</span>
+state    > <span class="r">ESCALATED to staff</span>
+genie    > I'm alerting the hotel team right now. If this is an emergency please call 112 —
+           I'm not able to call them for you. I'll stay here with you.
+screen   > Emergency: 112 | Hotel team alerted</pre>
+
+<div class="box say">
+  <div class="bt">Point out &mdash; four different kinds of "no"</div>
+  <p class="q">&ldquo;Room 402 isn't refused by clever wording. There is <strong>no way to express
+  it</strong> &mdash; no part of the system accepts a room number from the guest or from the AI.
+  The room comes from the device's identity.</p>
+  <p class="q">The door lock has no control in the system at any level. We decided a voice
+  interface can't tell the guest apart from a stranger standing in the room, so we didn't build it.</p>
+  <p class="q">The 35 degrees is a policy rule &mdash; that hotel allows 18 to 26. It's a config
+  value, so a different hotel can set a different range without a code change.</p>
+  <p class="q">And the last one: the device escalates to staff <em>and tells the guest the truth
+  about what it can't do</em>. It never implies it has called an ambulance. That wording is a
+  compliance requirement, not a style choice.&rdquo;</p>
+</div>
+
+<h2>Act 3 &mdash; a new hotel is configuration (2 minutes)</h2>
+
+<p>The same three words, three different rooms, three different outcomes &mdash; with no code
+involved anywhere.</p>
+
+<pre class="term">npm run turn -- --device d_412a "close the curtains"   <span class="c"># Deluxe: no curtains</span>
+npm run turn -- --device d_511a "close the curtains"   <span class="c"># Suite: has curtains</span>
+npm run turn -- --device d_512a "close the curtains"   <span class="c"># Suite, motor broken</span></pre>
+
+<pre class="term">[d_412a] genie > I'm not sure about that one — would you like me to connect
+                 you to the front desk?
+[d_511a] tool  > curtains.set [T1] <span class="g">ALLOW</span> ok
+[d_511a] genie > Curtains closed.
+[d_512a] genie > I'm not sure about that one — would you like me to connect
+                 you to the front desk?</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Room 412 is a Deluxe with no motorised curtains, so the AI is never even
+  offered a curtain control &mdash; it literally cannot propose one. Room 511 is a Suite and it
+  works. Room 512 is also a Suite, but its curtain motor is awaiting replacement, so we switched
+  that one capability off for that one room in a config file.</p>
+  <p class="q">That's the whole onboarding story. A new hotel is a config file describing which
+  rooms have what.&rdquo;</p>
+</div>
+
+<div class="box warn">
+  <div class="bt">Be honest about this one</div>
+  <p>The refusal wording for room 412 is weak &mdash; it should say &ldquo;those curtains are
+  manual&rdquo; rather than a generic &ldquo;I'm not sure&rdquo;. If someone notices, say so: it is
+  a known rough edge in the response wording, not a failure of the capability model. The important
+  behaviour &mdash; that the action is impossible &mdash; is correct.</p>
+</div>
+
+<h2>Optional Act 4 &mdash; money always asks first (1 minute)</h2>
+
+<pre class="term">npm run turn -- "I'd like a club sandwich and a beer" "yes"</pre>
+
+<pre class="term">tool  > fnb.get_menu       [T0] <span class="g">ALLOW</span> ok
+tool  > fnb.place_order    [T3] <span class="y">CONFIRM</span> <span class="y">R11.confirmation_required</span>
+genie > I have 2 items ready to order. That's 1240 INR, charged to your room.
+        Shall I place it?
+
+guest > yes
+lane  > <span class="b">confirm</span>
+tool  > fnb.place_order    [T3] <span class="g">ALLOW</span> <span class="y">R11.confirmation_redeemed</span> ok
+genie > Ordered — about 30 minutes. 1240 INR has gone to your room bill.</pre>
+
+<div class="box say">
+  <div class="bt">Point out</div>
+  <p class="q">&ldquo;Anything that costs money is frozen and read back with the total before we
+  charge anything. When the guest says yes, we execute <strong>the exact order we froze</strong>
+  &mdash; we don't re-interpret their 'yes'. So even if someone tried to slip an instruction into
+  that second sentence, it can't change what gets ordered.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>How it works, end to end</h1>
+
+<h2>The whole system on one page</h2>
+
+<pre class="ascii">
+   GUEST ROOM                    OUR SERVICE                        THE HOTEL'S SYSTEMS
+   ──────────                    ───────────                        ───────────────────
+
+   speaks                                                            room automation
+     │                                                               (Honeywell / Interel /
+     ▼                                                                BACnet / KNX …)
+   ┌────────────┐                                                          ▲
+   │ WOOHOO HUB │   text +                                                 │
+   │            │   device id   ┌──────────────────────────────┐           │
+   │ wake word  │──────────────►│ 1. WHO IS THIS?              │           │
+   │ mic + AEC  │   WebSocket   │    device id → hotel, room,  │           │
+   │ speaker    │◄──────────────│    what that room can do     │           │
+   │ screen     │   spoken      └──────────────┬───────────────┘           │
+   └────────────┘   reply                      ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 2. WHAT DID THEY MEAN?       │           │
+                                │    simple → instant answer   │           │
+                                │    complex → AI agent        │           │
+                                └──────────────┬───────────────┘           │
+                                               ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 3. IS IT ALLOWED?    ★★★     │           │
+                                │    right room? in bounds?    │           │
+                                │    costs money? needs a      │           │
+                                │    human? quiet hours?       │           │
+                                └──────────────┬───────────────┘           │
+                                               ▼                           │
+                                ┌──────────────────────────────┐           │
+                                │ 4. DO IT                     │───────────┘
+                                │    vendor-neutral command →  │
+                                │    per-vendor adapter        │──────► ticketing / PMS
+                                └──────────────┬───────────────┘         staff app
+                                               ▼
+                                ┌──────────────────────────────┐
+                                │ 5. CHECK IT ACTUALLY WORKED  │
+                                │    then say so — and record  │
+                                │    the whole decision        │
+                                └──────────────────────────────┘
+</pre>
+
+<div class="box say">
+  <div class="bt">Say this, walking the diagram</div>
+  <p class="q">&ldquo;Five steps. <strong>Who is this</strong> &mdash; the device tells us its
+  identity and we look up which hotel and which room, and what that room is capable of. The guest
+  never tells us their room number and neither does the AI.</p>
+  <p class="q"><strong>What did they mean</strong> &mdash; if it's simple and common we answer
+  instantly without AI. Otherwise the agent reasons about it.</p>
+  <p class="q"><strong>Is it allowed</strong> &mdash; this is the important one. Separate component,
+  checks every action against policy.</p>
+  <p class="q"><strong>Do it</strong> &mdash; we send a vendor-neutral command and an adapter
+  translates it for whatever system that hotel runs.</p>
+  <p class="q"><strong>Check it worked</strong> &mdash; we read the state back. We only say
+  'done' when we've actually observed it done. If we're not sure, we say 'I've asked for
+  that' instead. Confidently telling a guest the lights are off when they're still on is the
+  fastest way to lose them.&rdquo;</p>
+</div>
+
+<h2>The one idea worth repeating</h2>
+
+<div class="box good">
+  <div class="bt">The model proposes; the platform disposes</div>
+  <p>The AI cannot act. It can only suggest an action. A separate component &mdash; small enough
+  that a person can read all of it, with its own 27 tests &mdash; authorises every suggestion using
+  <strong>structured facts</strong>: which room, which action, what it costs, what time it is.</p>
+  <p>It never reads the guest's sentence. That's the whole trick. Someone can say anything they
+  like to the device &mdash; and people will try &mdash; but the component that decides never saw
+  their words, so there is nothing to persuade.</p>
+  <p><strong>Worst case if the AI is completely fooled:</strong> it says something embarrassing, or
+  adjusts the lights in the caller's own room. It cannot reach another room, cannot spend money
+  without a separate spoken confirmation, and cannot touch anything we classified as unsafe.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part V</span>What each team builds</h1>
+
+<p>This is the section your colleagues are in the room for. Give everyone the one-line version
+first, then go round the table.</p>
+
+<table>
+  <thead><tr><th style="width:20%">Team</th><th style="width:26%">You build</th><th style="width:28%">You talk to</th><th style="width:26%">Status of what you need</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Android / device</strong></td><td>Audio capture, wake word, endpointing, playback, screen</td><td><strong>WebSocket</strong> on our gateway</td><td><span class="pill p-done">Ready</span> Protocol is stable and documented</td></tr>
+    <tr><td><strong>Staff / admin UI</strong></td><td>Housekeeping and maintenance screens, property admin</td><td>An HTTP API on our service</td><td><span class="pill p-none">Not built</span> This is the gap &mdash; see below</td></tr>
+    <tr><td><strong>Ticketing / operations</strong></td><td>Push our requests into HotSOS, Quore, Alice, or your own queue</td><td>Our event stream, or we call your API</td><td><span class="pill p-part">Design agreed</span> Events exist internally; no external binding yet</td></tr>
+    <tr><td><strong>PMS integration</strong></td><td>Opera / Mews / Cloudbeds adapter</td><td>An adapter interface inside our service</td><td><span class="pill p-part">Interface defined</span> No implementation</td></tr>
+    <tr><td><strong>Automation vendors</strong></td><td>Honeywell, Interel, BACnet adapters</td><td>Our adapter contract</td><td><span class="pill p-part">Contract done</span> Only a simulator exists</td></tr>
+    <tr><td><strong>Infrastructure</strong></td><td>AWS deployment, CI/CD, monitoring</td><td>Docker images, Terraform modules</td><td><span class="pill p-part">Written</span> Never applied &mdash; no AWS credentials yet</td></tr>
+  </tbody>
+</table>
+
+<h2>Android / device team</h2>
+
+<p>You keep everything about sound. We keep everything about meaning.</p>
+
+<table>
+  <thead><tr><th style="width:50%">You own</th><th style="width:50%">We own</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Wake word (must stay on the device &mdash; no audio leaves the room until it fires), echo cancellation, detecting when the guest stopped speaking, speaker playback, screen rendering, offline fallback</td>
+      <td>Understanding, deciding, authorising, talking to the hotel's systems, and the wording of every reply</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The whole integration</h3>
+<pre>connect once, keep it open:   ws://gateway:8443
+
+send  { "type":"hello", "deviceId":"d_412a" }
+recv  { "type":"ready", "property":"…", "room":"412", "assistantName":"Voice Genie" }
+
+send  { "type":"turn", "transcript":"turn on the lights", "asrConfidence":0.94 }
+recv  { "type":"ack",   "filledPause":"Let me sort that—" }     ← play immediately
+recv  { "type":"speak", "text":"Done.", "turnId":"turn_…" }     ← then this
+recv  { "type":"screen","text":"…" }                            ← optional</pre>
+
+<div class="box note">
+  <div class="bt">Three things to tell them explicitly</div>
+  <ul>
+    <li><strong>One connection per device, kept open.</strong> Not one per request. Opening a
+    connection each turn adds a third of a second to every interaction.</li>
+    <li><strong>Play <code>ack</code> the moment it arrives.</strong> It comes back before the real
+    answer. That's what makes the device feel instant even when the AI is thinking. Getting this
+    wrong makes a good system feel slow.</li>
+    <li><strong>Send the real ASR confidence.</strong> Below 0.6 we ask the guest to repeat instead
+    of guessing at an action. If you hardcode it, we guess when we shouldn't.</li>
+  </ul>
+</div>
+
+<div class="box warn">
+  <div class="bt">And one change that isn't optional</div>
+  <p>The current app ships Google and AWS credentials and calls speech recognition directly. Those
+  have to come out. Once the app talks to us instead, a stolen device yields nothing but a
+  certificate we can revoke &mdash; and we can change speech vendor or tune accuracy without
+  shipping a new APK.</p>
+</div>
+
+<h2>Staff / admin UI team &mdash; read this first</h2>
+
+<div class="box warn">
+  <div class="bt">There is nothing for you to call yet. Say this plainly.</div>
+  <p>The logic exists and is tested &mdash; listing open requests, acknowledging escalations,
+  searching what the assistant did, switching capabilities off. But <strong>none of it is exposed
+  over HTTP, and there is no login</strong>. If the UI starts next sprint, this API is the blocker.</p>
+</div>
+
+<p>What needs building, roughly a week of work:</p>
+<table>
+  <thead><tr><th style="width:26%">Surface</th><th>What it gives the UI</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Staff tasks</strong></td><td>List, assign and complete service requests; acknowledge escalations; see SLA timers</td></tr>
+    <tr><td><strong>Property admin</strong></td><td>Rooms, devices, room types, and the capability config that decides what the assistant can do</td></tr>
+    <tr><td><strong>Operations</strong></td><td>Search what the assistant did and why; switch a capability off across a property in seconds</td></tr>
+    <tr><td><strong>Live events</strong></td><td>A stream so a housekeeping tablet buzzes the moment a request is raised, without polling</td></tr>
+    <tr><td><strong>Login &amp; permissions</strong></td><td>Staff sign-in, scoped per property. This is the only way into our system from outside, so it gets the most scrutiny.</td></tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;Before I build it I need two answers from the UI team: REST or GraphQL, and
+  which login provider we're standardising on. Both change the shape enough that I'd rather not
+  guess.&rdquo;</p>
+</div>
+
+<h2>Ticketing and operations team</h2>
+
+<p>The important question is not technical.</p>
+
+<div class="box say">
+  <div class="bt">Ask the room</div>
+  <p class="q">&ldquo;Do our hotels want maintenance tickets inside Woohoo, or pushed into the
+  system they already use? Because most hotels already run HotSOS or Quore, and no hotel wants a
+  second queue for their staff to watch.&rdquo;</p>
+</div>
+
+<p>We produce a well-described event every time something happens &mdash; a request raised, an
+order placed, an emergency escalated, a device going offline. Consuming it means receiving a small
+JSON message. The design supports either direction: we can hold the tickets, or we can push them
+to you and hold nothing.</p>
+
+<h2>Automation and PMS teams</h2>
+
+<p>Both work the same way: you implement a small interface, and nothing above it changes.</p>
+
+<pre>connect(property)          <span class="c">// open a session with that hotel's system</span>
+readRoomState(room)        <span class="c">// what is the room doing right now</span>
+applyCapability(room, op)  <span class="c">// "set the bedroom to 23" — vendor-neutral in, result out</span>
+health()                   <span class="c">// are you reachable</span>
+conformanceSuite()         <span class="c">// prove it works before a property goes live</span></pre>
+
+<div class="box info">
+  <div class="bt">The rule that keeps this clean</div>
+  <p>Vendor language stops at the adapter. Nothing above it may mention Honeywell, Interel, BACnet
+  objects or KNX group addresses. Your adapter receives &ldquo;set the bedroom setpoint to
+  23&rdquo; and translates it. If a room's curtain motor is open/close only, <em>your adapter</em>
+  handles a request for 40% &mdash; the AI never learns the difference.</p>
+  <p>There is a full simulator, so you can build and test your adapter with no hotel hardware
+  at all. It even fakes the awkward cases: slow responses, dropped connections, and writes that
+  acknowledge but don't actually take effect.</p>
+</div>
+
+<div class="box warn">
+  <div class="bt">One thing the automation team must plan for</div>
+  <p>These systems live inside the hotel, behind the hotel's firewall, with no route from the
+  internet &mdash; and hotel IT will not open one. So we need a small appliance on site that
+  connects <em>outward</em> to us. It also means the lights still work when the hotel's internet
+  drops, which happens more than anyone likes. That appliance is real hardware to buy, ship
+  and support, and it should be in someone's plan.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VI</span>Where we actually are</h1>
+
+<p>Be straight about this. It builds far more credibility than claiming completeness, and
+everyone finds out anyway.</p>
+
+<table>
+  <thead><tr><th style="width:32%">Component</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Understanding &amp; deciding</td><td><span class="pill p-done">Working</span></td><td>Runs end to end on a laptop. 93 automated tests.</td></tr>
+    <tr><td>Safety &amp; policy</td><td><span class="pill p-done">Working</span></td><td>27 dedicated tests plus 14 that actively try to break it.</td></tr>
+    <tr><td>Capability / config model</td><td><span class="pill p-done">Working</span></td><td>Demonstrated live in Act 3.</td></tr>
+    <tr><td>Device connection</td><td><span class="pill p-done">Working</span></td><td>WebSocket plus an HTTP endpoint for testing.</td></tr>
+    <tr><td>On-site appliance</td><td><span class="pill p-done">Working</span></td><td>Including keeping the room working when the internet is down.</td></tr>
+    <tr><td>Speech in and out</td><td><span class="pill p-none">Not built</span></td><td>We take text today. Needs vendor accounts and real hotel recordings to choose properly.</td></tr>
+    <tr><td>Android app changes</td><td><span class="pill p-none">Not started</span></td><td>Credential removal is the priority item.</td></tr>
+    <tr><td>Real vendor adapters</td><td><span class="pill p-none">Simulator only</span></td><td>Needs vendor documentation and lab hardware.</td></tr>
+    <tr><td>PMS integration</td><td><span class="pill p-none">Not built</span></td><td>Interface defined, no implementation.</td></tr>
+    <tr><td>Staff / admin API</td><td><span class="pill p-none">Not built</span></td><td>Blocks the UI team.</td></tr>
+    <tr><td>Database</td><td><span class="pill p-part">Schema only</span></td><td>Runs in memory today; swapping it in is a small change by design.</td></tr>
+    <tr><td>AWS deployment</td><td><span class="pill p-part">Written</span></td><td>Never run &mdash; no AWS access yet.</td></tr>
+  </tbody>
+</table>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;The thinking half is real and tested. The connecting half &mdash; speech, the
+  real hotel systems, the admin screens &mdash; is mostly still to build, and most of it is blocked
+  on things I can't get on my own: vendor documentation, hardware, and API credentials.&rdquo;</p>
+</div>
+
+<h2>What it will cost to run</h2>
+
+<p>If someone asks about cost, the number is small and that is worth saying clearly.</p>
+
+<table>
+  <thead><tr><th style="width:40%">At</th><th style="width:30%">Cloud + AI cost</th><th style="width:30%">Per room per month</th></tr></thead>
+  <tbody>
+    <tr><td>50 hotels &middot; 10,000 rooms</td><td>~$5,200 / month</td><td><strong>~$0.52</strong></td></tr>
+    <tr><td>500 hotels &middot; 100,000 rooms</td><td>~$49,000 / month</td><td><strong>~$0.49</strong></td></tr>
+  </tbody>
+</table>
+
+<p class="small">Planning estimates, not quotes. The single biggest uncertainty is how often guests
+actually talk to the device &mdash; we assumed six times a day per occupied room, and the whole
+model moves with that number. It is the first thing we should measure at the pilot.</p>
+
+<div class="box say">
+  <div class="bt">Say this</div>
+  <p class="q">&ldquo;Technology cost isn't what constrains this business &mdash; it's about fifty
+  cents per room per month. Hardware, installation and sales are the real costs. That means we
+  should spend our engineering effort on reliability and onboarding speed, not on shaving AI
+  bills.&rdquo;</p>
+</div>
+
+<h1 class="part"><span class="pn">Part VII</span>Questions you'll get, and decisions you need</h1>
+
+<h2>Likely questions</h2>
+
+<table>
+  <thead><tr><th style="width:34%">Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td><em>What if the AI does something wrong?</em></td><td>It can't act. It proposes; a separate component authorises. The worst case if it's completely fooled is an odd sentence or a light change in the caller's own room.</td></tr>
+    <tr><td><em>What if someone tries to trick it?</em></td><td>They will &mdash; some will film it. We have 14 tests that actively attempt it, and they must all pass before any release. The defence isn't clever wording, it's that the deciding component never reads what the guest said.</td></tr>
+    <tr><td><em>Can it hear us all the time?</em></td><td>No. Nothing leaves the room until the wake word fires, and that runs on the device. We never store recordings anywhere &mdash; audio exists only while it's being transcribed.</td></tr>
+    <tr><td><em>What happens when the internet drops?</em></td><td>The on-site appliance keeps lights, temperature and do-not-disturb working, the device says it's offline, and requests are queued and sent when it comes back.</td></tr>
+    <tr><td><em>What if the AI provider goes down?</em></td><td>We fall back to handling the common requests without AI and tell the guest what still works. The route to a human always stays open.</td></tr>
+    <tr><td><em>Can it unlock the door?</em></td><td>No, deliberately, and we should keep saying no. A voice can't tell a guest apart from a stranger standing in the room.</td></tr>
+    <tr><td><em>How long to add a hotel?</em></td><td>Target is five working days once the adapter for their vendor exists &mdash; it's a config file and an appliance. The first hotel on a new vendor takes longer because we build that adapter.</td></tr>
+    <tr><td><em>Is guest data safe?</em></td><td>We don't keep recordings, we mask personal details before anything is stored, card numbers are blocked outright, and each region's data stays in its region.</td></tr>
+    <tr><td><em>Why not just use ChatGPT/Gemini directly?</em></td><td>That's the easy 20%. The other 80% is making sure it can only ever act on the right room, within limits, with a record of why &mdash; and that's what we built.</td></tr>
+  </tbody>
+</table>
+
+<h2>Decisions to leave with</h2>
+
+<p>Close by asking for these. It turns a status update into a working meeting.</p>
+
+<div class="step"><div class="n">1</div><div class="t"><b>Which hotel is the pilot, and which automation vendor does it run?</b>
+This decides which adapter gets built first, and it's the longest lead time we have.</div></div>
+
+<div class="step"><div class="n">2</div><div class="t"><b>Does the UI team need the admin API this sprint?</b>
+If yes, it's about a week and I need to know REST or GraphQL, and which login provider.</div></div>
+
+<div class="step"><div class="n">3</div><div class="t"><b>Do hotels want tickets in our system or theirs?</b>
+This changes whether we're building a product or an integration, and it's a question for sales as much as engineering.</div></div>
+
+<div class="step"><div class="n">4</div><div class="t"><b>Who's getting us AWS access, vendor documentation and PMS credentials?</b>
+Most of what's unbuilt is blocked on these rather than on engineering time.</div></div>
+
+<hr class="soft">
+
+<div class="box good">
+  <div class="bt">If you remember one line from this meeting</div>
+  <p class="big" style="margin:0">The AI proposes. The platform decides. Everything else is detail.</p>
+</div>
+
+<p class="small" style="text-align:center;margin-top:10mm;">
+Woohoo V2 Team Briefing &middot; Demo output captured from a live run &middot;
+Deeper detail: <code>docs/architecture/</code> (design) and <code>docs/api/</code> (integration).
+</p>
+
+</body>
+</html>
