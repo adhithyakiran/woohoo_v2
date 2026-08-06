@@ -1,0 +1,430 @@
+<h1 class="part"><span class="pn">Part III</span>Capabilities</h1>
+
+<h2>10. The capability model</h2>
+
+<p>This is the abstraction that makes "a new hotel is configuration" true. Three levels:</p>
+
+<table>
+  <thead><tr><th style="width:22%">Level</th><th style="width:34%">What it is</th><th>Who sees it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Capability</strong></td><td>An abstract, vendor-neutral ability with a typed contract &mdash; <code>climate.setpoint</code> with a range, <code>curtains.position</code> 0&ndash;100</td><td>Defined once, globally, versioned</td></tr>
+    <tr><td><strong>Capability manifest</strong></td><td>Per room type: which capabilities exist, which zones, what bounds</td><td>Authored at onboarding. Generates the model's tool list</td></tr>
+    <tr><td><strong>Driver mapping</strong></td><td>Per vendor: capability operation &rarr; concrete protocol operation</td><td><strong>Only the adapter.</strong> Never the model, the prompt, the tests or the fast path</td></tr>
+  </tbody>
+</table>
+
+<h3>10.1 The same request, three rooms</h3>
+
+<pre class="ascii">
+ GUEST SAYS         AGENT SEES                  MANIFEST SAYS              ADAPTER DOES
+ ───────────        ──────────────────────      ──────────────────────     ─────────────────────
+ "close the         curtains.set({              room 511 has              inncom-adapter:
+  curtains"          zone:"bedroom",             curtains.position         → object 0x2A
+                     position: 0 })              driver: inncom            → SET_LEVEL 0
+                                                                           → poll until confirmed
+                                                                           → { position: 0 }
+
+ same words,        IDENTICAL tool call         room 88 has                interel-adapter:
+ different hotel                                 curtains.open_close       → PUT /rooms/88/blinds
+                                                 (binary, no position)      { state: "closed" }
+                                                 driver: interel           → { position: 0 }
+
+ same words,        TOOL NOT PRESENT            room 412 has no            (nothing — the model
+ no motorised        in the tool surface         curtain capability         could not have
+ curtains            at all                                                 proposed it)
+</pre>
+
+<div class="box good">
+  <div class="bt">Why absence beats refusal</div>
+  <p>A capability the room lacks produces <strong>no tool</strong>. The model cannot propose it, so
+  no runtime check is needed and no apology is generated for something that was never possible.</p>
+  <p>Verified in the running build: a Deluxe room sees <strong>18 tools</strong>, a Suite sees
+  <strong>21</strong>, and a Suite with a disabled curtain motor sees <strong>20</strong>. Same
+  code, same prompts, different config.</p>
+</div>
+
+<h2>11. Writing a manifest</h2>
+
+<pre>{
+  <span class="s">"id"</span>: <span class="s">"rt_suite"</span>,
+  <span class="s">"count"</span>: 20,
+  <span class="s">"capabilityManifest"</span>: {
+    <span class="s">"version"</span>: <span class="s">"3"</span>,
+    <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>, <span class="s">"living"</span>, <span class="s">"bathroom"</span>],
+    <span class="s">"capabilities"</span>: [
+      { <span class="s">"capability"</span>: <span class="s">"lighting.on_off"</span>,     <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>,<span class="s">"bathroom"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"lighting.brightness"</span>, <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"lighting.scene"</span>,     <span class="s">"zones"</span>: [<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"climate.setpoint"</span>,   <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>],
+        <span class="s">"minC"</span>: 18, <span class="s">"maxC"</span>: 26 },
+      { <span class="s">"capability"</span>: <span class="s">"climate.mode"</span>,       <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"curtains.position"</span>,  <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"dnd"</span> },
+      { <span class="s">"capability"</span>: <span class="s">"tv.power_volume_input"</span> },
+      { <span class="s">"capability"</span>: <span class="s">"media.playback"</span> }
+    ],
+    <span class="s">"scenes"</span>: [<span class="s">"sleep"</span>, <span class="s">"welcome"</span>, <span class="s">"work"</span>, <span class="s">"movie"</span>]
+  }
+}</pre>
+
+<h3>11.1 The capability vocabulary</h3>
+<table class="tight">
+  <thead><tr><th style="width:28%">Capability</th><th style="width:20%">Value</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">lighting.on_off</td><td>boolean</td><td>Per zone</td></tr>
+    <tr><td class="mono">lighting.brightness</td><td>0&ndash;100</td><td>Implies on_off</td></tr>
+    <tr><td class="mono">lighting.scene</td><td>scene name</td><td>Names come from <code>scenes</code></td></tr>
+    <tr><td class="mono">climate.setpoint</td><td>&deg;C</td><td><code>minC</code>/<code>maxC</code> enforced by policy, not schema</td></tr>
+    <tr><td class="mono">climate.mode</td><td>auto|cool|heat|fan|off</td><td>&mdash;</td></tr>
+    <tr><td class="mono">curtains.position</td><td>0&ndash;100</td><td>Continuous</td></tr>
+    <tr><td class="mono">curtains.open_close</td><td>boolean</td><td>Binary. Same tool; the adapter degrades (&sect;15)</td></tr>
+    <tr><td class="mono">dnd</td><td>off|dnd|make_up_room</td><td>Room-level, no zone</td></tr>
+    <tr><td class="mono">tv.power_volume_input</td><td>mixed</td><td>&mdash;</td></tr>
+    <tr><td class="mono">media.playback</td><td>play|pause|next|previous</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 Per-room overrides</h3>
+<pre>"roomOverrides": [
+  { "roomRef": "r_512", "disable": ["curtains.position"],
+    "reason": "motor awaiting replacement" }
+]</pre>
+
+<div class="box warn">
+  <div class="bt">Overrides may only REMOVE, never add</div>
+  <p>Enforced in code. If an override could grant a capability, a config edit would widen what the
+  agent can do without a manifest version bump &mdash; and capability changes need to be
+  reviewable. To add something, change the room type or move the room to a different one.</p>
+</div>
+
+<h2>12. Property configuration</h2>
+
+<p>One document per hotel. This is the artefact onboarding produces, and it is what makes a new
+property a configuration exercise.</p>
+
+<pre>{
+  <span class="s">"propertyId"</span>: <span class="s">"p_blr_whitefield"</span>,  <span class="s">"tenantId"</span>: <span class="s">"t_demo_apac"</span>,
+  <span class="s">"timezone"</span>: <span class="s">"Asia/Kolkata"</span>,       <span class="s">"languages"</span>: [<span class="s">"en-IN"</span>,<span class="s">"hi-IN"</span>],
+
+  <span class="s">"automation"</span>: {
+    <span class="s">"vendor"</span>: <span class="s">"inncom"</span>,
+    <span class="s">"roomRefMapping"</span>: <span class="s">"vendor_room_id"</span>   <span class="c">// NOT the hotel room number</span>
+  },
+
+  <span class="s">"policy"</span>: {
+    <span class="s">"climate"</span>: { <span class="s">"minC"</span>: 18, <span class="s">"maxC"</span>: 26, <span class="s">"maxChangesPerHour"</span>: 6 },
+    <span class="s">"quietHours"</span>: { <span class="s">"start"</span>: <span class="s">"22:00"</span>, <span class="s">"end"</span>: <span class="s">"07:00"</span>,
+                     <span class="s">"deferNonUrgentDispatch"</span>: <span class="k">true</span> },
+    <span class="s">"spend"</span>: { <span class="s">"perStayCap"</span>:  { <span class="s">"amount"</span>: 15000, <span class="s">"currency"</span>: <span class="s">"INR"</span> },
+                <span class="s">"perOrderCap"</span>: { <span class="s">"amount"</span>:  6000, <span class="s">"currency"</span>: <span class="s">"INR"</span> } },
+    <span class="s">"tierCeiling"</span>: <span class="s">"T3"</span>,       <span class="c">// kill switch: "T0" = read-only mode</span>
+    <span class="s">"disabledTools"</span>: []         <span class="c">// per-tool kill switch</span>
+  },
+
+  <span class="s">"escalation"</span>: { <span class="s">"emergencyNumberDisplay"</span>: <span class="s">"112"</span> },
+  <span class="s">"roomTypes"</span>: [ ... ],
+  <span class="s">"roomOverrides"</span>: [ ... ]
+}</pre>
+
+<div class="box info">
+  <div class="bt">The vendor room reference trap</div>
+  <p><code>vendorRoomId</code> (e.g. <code>INN-0412</code>) is the automation system's own
+  identifier. Assuming it equals the hotel room number is a classic onboarding bug whose symptom is
+  <strong>actions landing in the wrong room</strong> &mdash; and it can look correct in testing if
+  the test rooms happen to line up. Verify the mapping explicitly during onboarding, room by room.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>Automation adapters</h1>
+
+<h2>13. The contract</h2>
+
+<pre><span class="k">export interface</span> AutomationAdapter {
+  <span class="k">readonly</span> vendor: <span class="k">string</span>;
+
+  connect(binding: PropertyBinding): Promise&lt;ConnectionHandle&gt;;
+  health(): Promise&lt;{ reachable: <span class="k">boolean</span>; latencyMs: <span class="k">number</span>; lastError?: <span class="k">string</span> }&gt;;
+
+  readRoomState(room: VendorRoomRef): Promise&lt;CapabilityState[]&gt;;
+  subscribe(room: VendorRoomRef, cb: (change: StateChange) =&gt; <span class="k">void</span>): Unsubscribe;
+
+  <span class="c">/** Capability in, capability out. Vendor vocabulary never escapes this file. */</span>
+  applyCapability(
+    room: VendorRoomRef,
+    op: CapabilityOperation,     <span class="c">// { capability, zone?, value }</span>
+    idempotencyKey: <span class="k">string</span>,
+  ): Promise&lt;CapabilityResult&gt;;  <span class="c">// { status, observed?, message? }</span>
+
+  <span class="c">/** Run at onboarding and nightly against a designated test room. */</span>
+  conformanceSuite(): ConformanceTest[];
+}</pre>
+
+<p>Six methods. Everything else in the platform is built on them.</p>
+
+<h2>14. Writing an adapter</h2>
+
+<pre><span class="k">export class</span> InncomAdapter <span class="k">implements</span> AutomationAdapter {
+  <span class="k">readonly</span> vendor = <span class="s">'inncom'</span>;
+
+  <span class="k">private</span> objectMap!: ObjectMap;   <span class="c">// per-installation, from config — NOT hardcoded</span>
+  <span class="k">private</span> conn!: HeadEndConnection;
+
+  <span class="k">async</span> connect(binding: PropertyBinding) {
+    <span class="c">// Credentials come from the secret store, scoped to ONE property.
+    // Never a shared credential across properties — that turns one hotel's
+    // incident into everyone's.</span>
+    <span class="k">const</span> creds = <span class="k">await</span> secrets.get(binding.secretRef!);
+    <span class="k">this</span>.objectMap = <span class="k">await</span> loadObjectMap(binding.propertyId);
+    <span class="k">this</span>.conn = <span class="k">await</span> HeadEnd.open(creds);
+    <span class="k">return</span> { propertyId: binding.propertyId, connectedAt: Date.now(),
+             close: () =&gt; <span class="k">this</span>.conn.close() };
+  }
+
+  <span class="k">async</span> applyCapability(room, op, idempotencyKey) {
+    <span class="c">// 1. Idempotency — replays must not actuate twice.</span>
+    <span class="k">const</span> prior = <span class="k">this</span>.seen.get(idempotencyKey);
+    <span class="k">if</span> (prior) <span class="k">return</span> prior;
+
+    <span class="c">// 2. Translate capability → vendor. THE ONLY PLACE THIS HAPPENS.</span>
+    <span class="k">const</span> target = <span class="k">this</span>.objectMap.resolve(room.vendorRoomId, op.capability, op.zone);
+    <span class="k">if</span> (!target) {
+      <span class="k">return</span> { status: <span class="s">'rejected'</span>,
+               message: <span class="s">`No ${op.capability} in room ${room.vendorRoomId}`</span> };
+    }
+
+    <span class="c">// 3. Actuate.</span>
+    <span class="k">await this</span>.conn.setLevel(target.objectId, encodeValue(op, target));
+
+    <span class="c">// 4. Read back. "Applied" must mean OBSERVED applied (§17).</span>
+    <span class="k">const</span> observed = <span class="k">await this</span>.readCapability(room, op.capability, op.zone);
+    <span class="k">const</span> result: CapabilityResult = observed
+      ? { status: <span class="s">'applied'</span>, observed }
+      : { status: <span class="s">'pending'</span> };
+
+    <span class="k">this</span>.seen.set(idempotencyKey, result);
+    <span class="k">return</span> result;
+  }
+}</pre>
+
+<h3>14.1 Vendors to design around</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">Vendor</th><th style="width:24%">Typical surface</th><th>What shapes the adapter</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Honeywell INNCOM</strong></td><td>On-prem gateway, proprietary LAN protocol; sometimes a BACnet or REST bridge</td><td>LAN-only. Object/register addressing. Older installs dislike polling and have low concurrency. Firmware varies by install year &mdash; keep the object map in config, never in code.</td></tr>
+    <tr><td><strong>Interel</strong></td><td>On-prem controller, IP/REST or proprietary</td><td>More modern, still LAN-resident. Addresses rooms by <em>its own</em> reference.</td></tr>
+    <tr><td><strong>BACnet/IP</strong></td><td>Standard objects</td><td>Standardised but vendor-specific naming. <strong>Respect write priority arrays</strong> or you will fight the building's own control logic.</td></tr>
+    <tr><td><strong>KNX</strong></td><td>KNXnet/IP gateway</td><td>Group addresses carry no semantics without the ETS project file. Import it at onboarding to generate the mapping &mdash; manual mapping does not scale.</td></tr>
+    <tr><td><strong>Lutron / Crestron</strong></td><td>Processor with an IP protocol</td><td>Excellent lighting, but integration ports are licence-gated. <strong>Confirm licensing during pre-sales</strong> &mdash; it is a commercial blocker discovered late otherwise.</td></tr>
+  </tbody>
+</table>
+
+<h2>15. Capability degradation</h2>
+
+<p>Rooms differ in what their hardware can do. <strong>The adapter absorbs that, not the model.</strong></p>
+
+<pre><span class="k">case</span> CapabilityId.CurtainsPosition: {
+  <span class="k">const</span> requested = clamp(Number(op.value), 0, 100);
+
+  <span class="c">// A binary motor snaps to fully open or fully closed. The model asked for a
+  // position and gets a truthful observed value back — it never learns why.</span>
+  <span class="k">const</span> binary = <span class="k">this</span>.objectMap.isBinaryCurtain(room.vendorRoomId, op.zone);
+  <span class="k">const</span> applied = binary ? (requested &gt;= 50 ? 100 : 0) : requested;
+
+  <span class="k">await this</span>.conn.setLevel(target.objectId, applied);
+  <span class="k">return</span> { status: <span class="s">'applied'</span>,
+           observed: { capability: op.capability, zone: op.zone,
+                       value: applied, available: <span class="k">true</span> } };
+}</pre>
+
+<p>Return the <em>observed</em> value, not the requested one. The agent confirms from what it
+observes, so a guest asking for 40% in a binary room hears "curtains closed" &mdash; which is true
+&mdash; rather than "set to 40%", which would not be.</p>
+
+<h2>16. Failure, retries, circuit breakers</h2>
+
+<table>
+  <thead><tr><th style="width:26%">Situation</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Head-end slow</td><td>Hard 2.5&nbsp;s budget. Beyond it the result is <code>pending</code>, and the guest is told "I've asked for that" &mdash; never "done".</td></tr>
+    <tr><td>Head-end unreachable</td><td>Return an error. The platform normalises it to <code>TEMPORARILY_UNREACHABLE</code> and offers the front desk.</td></tr>
+    <tr><td>Repeated failures</td><td><strong>Circuit breaker per (property, vendor)</strong>: 5 failures in 30&nbsp;s opens it for 60&nbsp;s.</td></tr>
+    <tr><td>Retry</td><td>Automatic only for reads and reversible physical actions. Never for anything creating a commitment.</td></tr>
+    <tr><td>Idempotency</td><td>Honour the key. Retries happen; double actuation must not.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The circuit breaker is the most important resilience control in the system</div>
+  <p>One hotel's hung head-end must never consume the adapter's capacity for every other property.
+  Without per-property bulkheading, the single most likely production incident is: one flaky BMS
+  takes down voice control for every hotel on the platform.</p>
+  <p>This is also the reason adapters are separate deployable services rather than modules.</p>
+</div>
+
+<h2>17. Verify-read</h2>
+
+<div class="box warn">
+  <div class="bt">Never report success you did not observe</div>
+  <p>The most damaging failure mode in this product is the confident false confirmation: the guest
+  hears "I've turned off the lights", the lights stay on, and the device is dead to them.</p>
+  <p>Real systems <em>acknowledge writes that never take effect</em> &mdash; the simulator models
+  this deliberately as "silent failure". The only defence is reading the state back.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Return</th><th style="width:34%">When</th><th>Guest hears</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">applied</td><td>Read-back confirms the new value</td><td>"I've set it to 23 degrees."</td></tr>
+    <tr><td class="mono">pending</td><td>Acknowledged but not yet observed</td><td>"I've asked for that &mdash; give it a moment."</td></tr>
+    <tr><td class="mono">rejected</td><td>The system refused it</td><td>"That's not something I can do here."</td></tr>
+    <tr><td><em>throw</em></td><td>Unreachable</td><td>"I can't reach the room systems right now."</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part V</span>On premises</h1>
+
+<h2>18. Why the edge gateway exists</h2>
+
+<p>Four reasons, and they are not negotiable:</p>
+
+<ul>
+  <li>INNCOM and Interel head-ends are <strong>LAN-resident</strong>, typically on an isolated
+  building network with no outbound route and certainly no inbound one.</li>
+  <li>Hotel IT <strong>will not open inbound firewall ports</strong> for a vendor &mdash; and the
+  request alone delays onboarding by months.</li>
+  <li>Round-tripping every light command to a cloud region adds 60&ndash;200&nbsp;ms to an action
+  whose entire budget is under a second.</li>
+  <li>When the property WAN drops &mdash; routine &mdash; the guest must still be able to turn on
+  the lights. Only something inside the building can deliver that.</li>
+</ul>
+
+<pre class="ascii">
+  PATH 1 — VOICE (normal turn)      device ═══► cloud
+     The device's connection merely TRANSITS the hotel network. The edge gateway
+     is NOT in this path. This is commonly misread from the architecture diagram.
+
+  PATH 2 — ACTUATION                cloud ──► (outbound tunnel) ──► edge ──LAN──► head-end
+     The tunnel was opened OUTWARD by the edge. Nothing ever connects inward.
+
+  PATH 3 — OFFLINE ONLY             device ──LAN──► edge ──► head-end
+     The only time the device talks to the edge.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Current implementation gap</div>
+  <p>In this build the cloud creates its own adapter instance and talks to the head-end
+  <strong>directly</strong> &mdash; Path 2 is not wired through the tunnel. The edge gateway exists,
+  works and has passing tests, but is not in the actuation path.</p>
+  <p>Path 3 has the mirror gap: the appliance opens no listening socket, so a device has nothing to
+  reach when the WAN drops. Both are Phase-2 work and both need planning now.</p>
+</div>
+
+<h2>19. What runs on it</h2>
+
+<pre class="ascii">
+ ┌─────────── EDGE GATEWAY (per property; HA pair above ~250 rooms) ────────────┐
+ │  HARDWARE  fanless x86/ARM · 4–8 GB · 128 GB SSD · dual NIC · TPM            │
+ │            optional LTE failover                                            │
+ │                                                                             │
+ │  tunnel-agent     persistent OUTBOUND mTLS. No listening ports.             │
+ │  protocol-driver  INNCOM / Interel / BACnet / KNX / Modbus termination      │
+ │  state-shadow     local current state per room; publishes deltas upstream   │
+ │  fallback-engine  offline rules: local grammar → direct actuation           │
+ │  outbox           durable queue for tickets raised while the WAN was down   │
+ │  health-agent     metrics, remote diagnostics, watchdog                     │
+ └─────────────────────────────────────────────────────────────────────────────┘
+
+  Security: per-property X.509 · secure boot · encrypted disk · outbound 443 only
+            no SSH in production · property-scoped credentials — a compromise
+            reaches ONE hotel
+</pre>
+
+<h1 class="part"><span class="pn">Part VI</span>Practical</h1>
+
+<h2>20. The simulator</h2>
+
+<p>You can build and test a complete adapter integration <strong>without any hotel hardware</strong>.
+The simulator models the behaviours that actually bite.</p>
+
+<pre><span class="k">const</span> adapter = <span class="k">new</span> SimulatorAdapter({
+  latencyMs: 120,           <span class="c">// base write latency, ±40% jitter</span>
+  failureRate: 0.05,        <span class="c">// 5% of calls fail as unreachable</span>
+  silentFailureRate: 0.02,  <span class="c">// acknowledged but NOT applied — the nastiest real bug</span>
+  driftRate: 0.01,          <span class="c">// state changes because a housekeeper used a wall switch</span>
+  binaryCurtainRooms: [<span class="s">'INN-0088'</span>],   <span class="c">// exercise capability degradation</span>
+  seed: 42,                 <span class="c">// deterministic — evals must be reproducible</span>
+});</pre>
+
+<div class="box good">
+  <div class="bt">Build against the simulator first, deliberately</div>
+  <p>Access to real hotel hardware is the biggest velocity constraint on this project, and you
+  cannot ask a hotel to unplug its head-end to test your error handling. Every failure path in your
+  adapter should be exercised here before you touch a real system &mdash; especially silent failure
+  and drift, which are the two you will otherwise discover in production.</p>
+</div>
+
+<h2>21. Conformance testing</h2>
+
+<p>Every adapter ships a suite that runs at onboarding and nightly against a designated test room.
+This is the go-live gate for a property.</p>
+
+<pre>conformanceSuite(): ConformanceTest[] {
+  <span class="k">return</span> [
+    check(<span class="s">'lights on'</span>,        <span class="s">'lighting.on_off'</span>,     <span class="k">true</span>, <span class="s">'bedroom'</span>),
+    check(<span class="s">'lights dim to 40'</span>, <span class="s">'lighting.brightness'</span>, 40,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'setpoint 23'</span>,      <span class="s">'climate.setpoint'</span>,    23,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'mode cool'</span>,        <span class="s">'climate.mode'</span>,      <span class="s">'cool'</span>,  <span class="s">'bedroom'</span>),
+    check(<span class="s">'curtains closed'</span>,  <span class="s">'curtains.position'</span>,    0,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'dnd on'</span>,           <span class="s">'dnd'</span>,               <span class="s">'dnd'</span>),
+  ];
+}</pre>
+
+<pre class="term">npm run eval -- capability     <span class="c"># capability matrix across room types</span>
+npm test                       <span class="c"># everything, including the safety gates</span></pre>
+
+<h2>22. Onboarding a property</h2>
+
+<p>Target: <strong>five working days</strong> for a 300-room property, once an adapter for its vendor
+exists.</p>
+
+<table>
+  <thead><tr><th style="width:8%">Day</th><th style="width:28%">Step</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>Survey</td><td>Which vendor, which firmware, which integration surface. Room types and what each actually has. Network: is there an IoT VLAN?</td></tr>
+    <tr><td><strong>1&ndash;2</strong></td><td>Room reference mapping</td><td>Hotel room number &rarr; <code>vendorRoomId</code>. <strong>Verify, don't assume.</strong> Import the ETS project for KNX; export the object map for INNCOM.</td></tr>
+    <tr><td><strong>2</strong></td><td>Manifests</td><td>One per room type &mdash; typically six to eight. Plus overrides for rooms with known faults.</td></tr>
+    <tr><td><strong>2</strong></td><td>Property config</td><td>Temperature band, quiet hours, spend caps, emergency number, languages, brand tone.</td></tr>
+    <tr><td><strong>3</strong></td><td>Edge appliance</td><td>Install, bind to the property, verify the outbound tunnel, confirm it reaches the head-end.</td></tr>
+    <tr><td><strong>3&ndash;4</strong></td><td>Conformance</td><td>Run the suite against a designated test room. Every capability in every room type.</td></tr>
+    <tr><td><strong>4</strong></td><td>Device enrolment</td><td>Provision hubs, bind each to its room, <strong>verify the binding</strong> against the automation system.</td></tr>
+    <tr><td><strong>5</strong></td><td>Content &amp; go-live</td><td>Menu with spoken aliases, property FAQ, staff escalation targets, welfare protocol. Canary a floor before the property.</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">The step that goes wrong</div>
+  <p>Room reference mapping. It is tedious, it looks trivial, and getting it wrong means actions
+  land in the wrong room while every log says they succeeded. Budget real time for verification,
+  and re-verify after any refurbishment &mdash; a device moved between rooms produces exactly the
+  same silent failure.</p>
+</div>
+
+<h2>23. Checklist</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Area</th><th>Check</th></tr></thead>
+  <tbody>
+    <tr><td>MCP tools</td><td>No tool takes a room/property/tenant parameter · scope honoured out of band · cross-tenant reach impossible · returns within 2.5&nbsp;s · idempotent mutations · structured errors · reads are side-effect free</td></tr>
+    <tr><td>Data</td><td>Device resolution cached · <code>vendorRoomId</code> verified per room · manifests per room type not per room · RLS enabled and CI-tested</td></tr>
+    <tr><td>Adapter</td><td>Vendor vocabulary never escapes the file · object map in config not code · idempotency honoured · degradation handled in the adapter · returns <em>observed</em> values · per-property credentials</td></tr>
+    <tr><td>Reliability</td><td>2.5&nbsp;s budget · circuit breaker per (property, vendor) · verify-read on every write · <code>pending</code> distinguished from <code>applied</code></td></tr>
+    <tr><td>Testing</td><td>Conformance suite passes · silent failure exercised · drift exercised · binary degradation exercised · deterministic seed</td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 MCP, Data &amp; Automation Integration Guide<br>
+Interfaces verified against the running build &middot; MCP transport and real vendor adapters are not yet implemented.
+</p>
+</body>
+</html>

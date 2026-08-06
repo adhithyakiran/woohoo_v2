@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — MCP, Data &amp; Automation Integration Guide</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:16mm 14mm 15mm 14mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:9.6pt;line-height:1.56;color:var(--ink);margin:0;}
+p{margin:0 0 7pt;}
+strong{font-weight:650;}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:8.5pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:21pt;font-weight:300;color:var(--navy);margin:0 0 4mm;padding-bottom:3.5mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:8pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:12.8pt;font-weight:600;color:var(--navy);margin:8mm 0 3mm;padding-left:3.5mm;border-left:3.5px solid var(--accent);page-break-after:avoid;}
+h3{font-size:10.6pt;font-weight:650;color:var(--navy2);margin:6mm 0 2mm;page-break-after:avoid;}
+h4{font-size:9.6pt;font-weight:650;margin:4mm 0 1.5mm;page-break-after:avoid;}
+ul,ol{margin:0 0 7pt;padding-left:17px;} li{margin-bottom:3pt;}
+table{width:100%;border-collapse:collapse;margin:3mm 0 6mm;font-size:8.3pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4.5px 6px;font-weight:600;font-size:7.9pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4.5px 6px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+table.tight{font-size:7.8pt;} table.tight td,table.tight th{padding:3.4px 5px;}
+.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.9pt;}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);padding:4mm 5mm;margin:4mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.5pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2mm;}
+.box p:last-child,.box ul:last-child,.box ol:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.35pt;line-height:1.44;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3.5mm 4mm;margin:3mm 0 5mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.ascii{font-size:6.9pt;line-height:1.3;}
+pre.term{background:#131c27;color:#cfe0ee;border-color:#131c27;font-size:7.5pt;}
+pre .c{color:#7d94a8;} pre .k{color:#8a5cd6;} pre .s{color:#0a7a52;}
+pre.term .c{color:#7d94a8;} pre.term .g{color:#7ddc9a;} pre.term .r{color:#f08a8a;} pre.term .y{color:#e8c87a;}
+.pill{display:inline-block;font-size:6.9pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.8mm 2mm;border-radius:2.5px;margin-right:2px;}
+.p-done{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-gap{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.p-part{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#10262e 0%,#153d47 45%,#1c5c66 100%);color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#7fd4d8;font-weight:600;}
+.cover h1{font-size:34pt;line-height:1.08;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#a4e8ec;}
+.cover .sub{font-size:12.5pt;color:#b0d2d6;margin-top:9mm;font-weight:300;line-height:1.5;max-width:136mm;}
+.cover .rule{width:52mm;height:3px;background:#7fd4d8;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.6pt;color:#9dc0c4;display:grid;grid-template-columns:repeat(3,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#a4e8ec;font-size:7.4pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 13px;font-size:8pt;color:#d8eef0;margin-right:6px;margin-top:4px;}
+.toc{column-count:2;column-gap:9mm;font-size:8.4pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3.5mm 0 1.2mm;border-bottom:1px solid var(--line);padding-bottom:1mm;break-after:avoid;}
+.toc .ti{color:var(--ink2);margin-bottom:.9mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+.small{font-size:8pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:6mm 0;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>MCP, Data &amp;<b>Automation Integration</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    Connecting the hotel/room/device data, and connecting the room automation
+    systems &mdash; what the agent needs, what it must never see, and how to
+    build an adapter without a hotel.
+  </div>
+  <div>
+    <span class="badge">MCP</span>
+    <span class="badge">Catalogue &amp; schema</span>
+    <span class="badge">INNCOM / Interel</span>
+    <span class="badge">Simulator</span>
+  </div>
+  <div class="meta">
+    <div><b>For</b>Data &amp; integration engineers</div>
+    <div><b>Covers</b>MCP servers · adapters · edge</div>
+    <div><b>Test with</b>Full simulator, no hardware</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">Read first</span>What exists, and what doesn't</h1>
+
+<p>This guide covers two jobs that meet in the middle: <strong>getting hotel data into the
+system</strong>, and <strong>getting commands out to the room</strong>. Before either, three
+honest statements about the current build.</p>
+
+<table>
+  <thead><tr><th style="width:30%">Thing</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>MCP semantics</strong><br><span class="small">registry, per-room filtering, scope injection, sanitisation, error shaping, audit</span></td>
+      <td><span class="pill p-done">Built</span></td>
+      <td>All of it works and is tested. This is the valuable part.</td>
+    </tr>
+    <tr>
+      <td><strong>MCP protocol</strong><br><span class="small">JSON-RPC, Streamable HTTP, an actual MCP client</span></td>
+      <td><span class="pill p-gap">Not built</span></td>
+      <td>The gateway calls in-process functions. There is no MCP wire protocol anywhere in the codebase. <strong>Your existing MCP servers are not connected.</strong> &sect;3 is the work.</td>
+    </tr>
+    <tr>
+      <td><strong>Automation adapter contract</strong></td>
+      <td><span class="pill p-done">Built</span></td>
+      <td>Interface complete, exercised by a full simulator with failure injection.</td>
+    </tr>
+    <tr>
+      <td><strong>Real vendor adapters</strong><br><span class="small">INNCOM, Interel, BACnet, KNX</span></td>
+      <td><span class="pill p-gap">Not built</span></td>
+      <td>Needs vendor protocol documentation and lab hardware. Part IV is how to write one.</td>
+    </tr>
+    <tr>
+      <td><strong>Database</strong></td>
+      <td><span class="pill p-part">Schema only</span></td>
+      <td>Full Postgres schema with row-level security exists; repositories are in-memory. Swapping is a constructor change &mdash; &sect;7.</td>
+    </tr>
+    <tr>
+      <td><strong>Edge gateway in the actuation path</strong></td>
+      <td><span class="pill p-gap">Not wired</span></td>
+      <td>The appliance exists and is tested, but the cloud currently talks to the adapter directly. &sect;18.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">The one idea that governs everything in this guide</div>
+  <p><strong>The agent reasons about capabilities, never about vendors.</strong> It knows there is
+  "a thermostat in the bedroom zone with a permitted range". It has never heard of INNCOM, Interel,
+  BACnet objects or KNX group addresses.</p>
+  <p>Every vendor-specific fact lives in exactly two places: an <em>adapter</em>, and a per-property
+  <em>capability manifest</em>. If vendor vocabulary ever appears above those, the abstraction is
+  broken and adding the next hotel becomes an engineering project again.</p>
+</div>
+
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Part I &mdash; MCP</div>
+  <div class="ti"><b>1</b> What MCP means here</div>
+  <div class="ti"><b>2</b> The gateway's six jobs</div>
+  <div class="ti"><b>3</b> Connecting your MCP servers</div>
+  <div class="ti"><b>4</b> What must never be an MCP tool</div>
+
+  <div class="tp">Part II &mdash; Data</div>
+  <div class="ti"><b>5</b> The domain model</div>
+  <div class="ti"><b>6</b> What the agent needs per turn</div>
+  <div class="ti"><b>7</b> Schema and repositories</div>
+  <div class="ti"><b>8</b> Tenant isolation</div>
+  <div class="ti"><b>9</b> Caching and freshness</div>
+
+  <div class="tp">Part III &mdash; Capabilities</div>
+  <div class="ti"><b>10</b> The capability model</div>
+  <div class="ti"><b>11</b> Writing a manifest</div>
+  <div class="ti"><b>12</b> Property configuration</div>
+
+  <div class="tp">Part IV &mdash; Automation adapters</div>
+  <div class="ti"><b>13</b> The contract</div>
+  <div class="ti"><b>14</b> Writing an adapter</div>
+  <div class="ti"><b>15</b> Capability degradation</div>
+  <div class="ti"><b>16</b> Failure, retries, circuit breakers</div>
+  <div class="ti"><b>17</b> Verify-read</div>
+
+  <div class="tp">Part V &mdash; On premises</div>
+  <div class="ti"><b>18</b> Why the edge gateway exists</div>
+  <div class="ti"><b>19</b> What runs on it</div>
+
+  <div class="tp">Part VI &mdash; Practical</div>
+  <div class="ti"><b>20</b> The simulator</div>
+  <div class="ti"><b>21</b> Conformance testing</div>
+  <div class="ti"><b>22</b> Onboarding a property</div>
+  <div class="ti"><b>23</b> Checklist</div>
+</div>

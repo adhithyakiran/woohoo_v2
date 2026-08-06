@@ -1,0 +1,403 @@
+<h1 class="part"><span class="pn">Part III</span>The device screen</h1>
+
+<h2>10. How it works</h2>
+
+<p>The in-room hub has a display. Its <strong>content is decided by the server</strong> and arrives
+as a <code>screen</code> message; its <strong>presentation is yours</strong>. The device renders,
+it never decides.</p>
+
+<pre class="term">← {"type":"speak",  "text":"I've set it to 22.5 degrees.", "turnId":"turn_…"}
+← {"type":"screen", "text":"22.5°C"}</pre>
+
+<p>You are designing the screen states; the Android team implements them. Two constraints from the
+protocol: <code>screen</code> is <strong>plain text</strong> that may contain <code>\n</code>
+&mdash; never markdown, never HTML &mdash; and it is only sent when the display carries something
+the audio does not.</p>
+
+<h2>11. Screen states</h2>
+
+<pre class="ascii">
+  IDLE ──wake word──► LISTENING ──guest stops──► THINKING ──ack──► SPEAKING
+    ▲                                                                 │
+    │                                                                 │ chargeable
+    │                                                                 ▼
+    │                                                          CONFIRMING
+    │                                                                 │
+    └──────────────────────── done / cancelled / expired ─────────────┘
+
+  Cross-cutting: MUTED (hardware switch) · OFFLINE · SERVICE (fatal)
+</pre>
+
+<table>
+  <thead><tr><th style="width:16%">State</th><th style="width:34%">Must communicate</th><th>Design notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>IDLE</strong></td><td>Room is ready; device is not listening</td><td>Ambient. Time, room number, maybe weather. Should be pleasant to have on a bedside table at 3&nbsp;a.m. &mdash; dim, no motion.</td></tr>
+    <tr><td><strong>LISTENING</strong></td><td><strong>Unambiguously</strong> that the mic is live</td><td>The most important honesty signal in the product. Distinct, immediate, impossible to miss.</td></tr>
+    <tr><td><strong>THINKING</strong></td><td>Working on it</td><td>May last 30&nbsp;ms. Fade in after ~150&nbsp;ms so fast turns don't flash.</td></tr>
+    <tr><td><strong>SPEAKING</strong></td><td>What was said and what changed</td><td>Show <code>screen</code> if present; otherwise the <code>speak</code> text.</td></tr>
+    <tr><td><strong>CONFIRMING</strong></td><td><strong>The total</strong></td><td>The amount is the largest element. See &sect;6.</td></tr>
+    <tr><td><strong>MUTED</strong></td><td>Mic is off <em>in hardware</em></td><td>Unmistakable and persistent. Guests must be able to trust it at a glance from across the room.</td></tr>
+    <tr><td><strong>OFFLINE</strong></td><td>Reduced capability + what still works</td><td>Badge, not a takeover.</td></tr>
+    <tr><td><strong>SERVICE</strong></td><td>Needs staff attention</td><td>Neutral. Not the guest's problem to solve.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">Two states carry trust, not just information</div>
+  <p><strong>LISTENING</strong> and <strong>MUTED</strong> are the two that decide whether a guest
+  believes the device isn't spying on them. If either is subtle, ambiguous, or looks similar to a
+  neighbouring state, the product has a credibility problem no amount of privacy policy fixes.</p>
+  <p>Design them to be readable from the bed, in the dark, without glasses.</p>
+</div>
+
+<h2>12. Latency and the filled pause</h2>
+
+<p>There is a mechanism you should design around rather than fight.</p>
+
+<pre class="term">guest stops speaking          at    0ms
+ack   "Let me sort that—"     at    2ms   <span class="g">← device speaks HERE</span>
+speak "I've set it to 22.5"   at 1846ms</pre>
+
+<p>The device says something reassuring within milliseconds, from cached audio, then the real
+answer arrives up to two seconds later. Measured on the real stack.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Implication for the screen</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td>Audio and screen can be ~2&nbsp;s apart</td><td>Do not wait for <code>speak</code> to leave IDLE. Enter THINKING when the utterance ends.</td></tr>
+    <tr><td>Fast turns are genuinely fast</td><td>A spinner that appears for 39&nbsp;ms is worse than none. Delay it ~150&nbsp;ms.</td></tr>
+    <tr><td>The device is already talking during THINKING</td><td>THINKING should not look like silence &mdash; it should look like attentiveness.</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part IV</span>Craft</h1>
+
+<h2>13. Accessibility</h2>
+
+<div class="box warn">
+  <div class="bt">Voice must never be the only path</div>
+  <p>Guests who are deaf, hard of hearing, non-verbal, or who have atypical speech must be able to
+  reach <strong>every</strong> function through the screen. This is an obligation under ADA and
+  EN&nbsp;301&nbsp;549 &mdash; and in an emergency the screen works when speech does not, which is
+  exactly when it matters most.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Requirement</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Every spoken reply on screen</td><td>Not a summary. The same words.</td></tr>
+    <tr><td>Every function touch-reachable</td><td>If it can be asked for, it can be tapped. No voice-only capability.</td></tr>
+    <tr><td>Contrast</td><td>WCAG AA minimum; AA-large for anything read from across a room.</td></tr>
+    <tr><td>Text scaling</td><td>Support system scaling. In-room devices are used by older guests without their glasses.</td></tr>
+    <tr><td>Motion</td><td>Respect reduced-motion. Nothing that pulses in a dark bedroom.</td></tr>
+    <tr><td>Touch targets</td><td>44&nbsp;pt minimum. Guests are often standing, holding something, half asleep.</td></tr>
+    <tr><td>Slow-speech mode</td><td>A per-room setting staff enable at check-in extends how long the device waits before deciding the guest has finished. Surface it in the admin UI (&sect;16).</td></tr>
+    <tr><td>Never colour alone</td><td>Especially for MUTED and LISTENING.</td></tr>
+  </tbody>
+</table>
+
+<h2>14. Copy and tone</h2>
+
+<p>Most guest-facing wording comes from the server, already toned per property. Your copy is the
+scaffolding around it: labels, buttons, empty states, errors.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Principle</th><th style="width:34%">Do</th><th>Don't</th></tr></thead>
+  <tbody>
+    <tr><td>Never claim an outcome you don't have</td><td>"I've asked for that"</td><td>"Done!" before confirmation</td></tr>
+    <tr><td>Refusals are information</td><td>"That's not something I can do here."</td><td>"Error: permission denied"</td></tr>
+    <tr><td>Say what still works</td><td>"I can still do lights and temperature."</td><td>"Service unavailable"</td></tr>
+    <tr><td>Money is explicit</td><td>"₹1,240 charged to your room"</td><td>"Confirm order"</td></tr>
+    <tr><td>No jargon</td><td>"the front desk"</td><td>"escalate to T2 support"</td></tr>
+    <tr><td>Brief</td><td>One idea per screen</td><td>Paragraphs on a bedside display</td></tr>
+  </tbody>
+</table>
+
+<div class="box copy">
+  <div class="bt">Never surface these internals to a guest</div>
+  <p><code>lane</code>, <code>tier</code>, <code>ruleId</code>, <code>turnId</code>,
+  <code>verdict</code>, tool names like <code>climate.set_temperature</code>, and
+  <code>degradationLevel</code> as a number.</p>
+  <p>They are exactly right for a debug view or the staff console. To a guest they are noise, and
+  "T3 CONFIRM R11.confirmation_required" is not a sentence anyone should read on holiday.</p>
+</div>
+
+<h2>15. What never to show</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Never display</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Another room's number or any other guest's details</td><td>The service refuses these structurally, but a UI must not reintroduce them by, say, showing a property-wide feed on a guest surface.</td></tr>
+    <tr><td>Full card numbers, ever</td><td>The system blocks them on every path. Never add a field that accepts one &mdash; a guest reading a card number aloud in a hotel room is a bad idea on its own terms.</td></tr>
+    <tr><td>Raw internal errors or stack traces</td><td>&mdash;</td></tr>
+    <tr><td>Staff names or internal assignment detail</td><td>On guest surfaces.</td></tr>
+    <tr><td>"AI" framing on an emergency screen</td><td>In an escalation the guest needs a phone number, not a disclaimer.</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part V</span>Staff &amp; admin &mdash; the contract</h1>
+
+<div class="box warn">
+  <div class="bt">This API does not exist yet</div>
+  <p>Everything in this Part is a <strong>proposed contract</strong>, not something you can call.
+  It is written so you can design screens and mock data now, and so that when it is built it matches
+  what you designed. Roughly a week of work once the decisions in &sect;24 are made.</p>
+</div>
+
+<h2>16. Screens needed</h2>
+
+<table>
+  <thead><tr><th style="width:22%">Screen</th><th style="width:30%">Who uses it</th><th>Must do</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Request queue</strong></td><td>Housekeeping, maintenance</td><td>Live list of open requests with room, category, age, SLA countdown. Assign, start, complete. This is the screen someone stares at all shift &mdash; it deserves the most attention.</td></tr>
+    <tr><td><strong>Escalations</strong></td><td>Duty manager, front desk</td><td>Unacknowledged emergencies, loudly. Acknowledge with a name attached. <strong>An escalation nobody acknowledges is the worst failure in the system</strong> &mdash; design the alarm for that case first.</td></tr>
+    <tr><td><strong>Room view</strong></td><td>Front desk</td><td>One room: current state, open requests, orders, recent activity. What you open when a guest phones down.</td></tr>
+    <tr><td><strong>Activity log</strong></td><td>Duty manager, support</td><td>What the assistant did and <em>why</em> &mdash; the record that resolves a billing dispute. Searchable by room and time.</td></tr>
+    <tr><td><strong>Property config</strong></td><td>Ops / onboarding</td><td>Room types, capabilities, temperature bands, quiet hours, spend caps. This is what makes a new hotel a config change rather than an engineering project.</td></tr>
+    <tr><td><strong>Devices</strong></td><td>Ops, hotel engineering</td><td>Online/offline, signal strength, firmware, room binding. Which rooms have poor Wi-Fi.</td></tr>
+    <tr><td><strong>Kill switches</strong></td><td>Ops</td><td>Disable one capability across a property in seconds; put a property in read-only mode. Used during incidents &mdash; must be fast and unambiguous.</td></tr>
+    <tr><td><strong>Menu &amp; knowledge</strong></td><td>F&amp;B, front office</td><td>Menu items with prices, availability, spoken aliases. Property FAQ.</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">Before designing the request queue, settle one product question</div>
+  <p>Most hotels already run HotSOS, Quore or Alice, and <strong>no hotel wants a second queue for
+  their staff to watch</strong>. If we push requests into their existing system, this screen becomes
+  a thin monitoring view rather than a working queue &mdash; a very different design.</p>
+  <p>Worth resolving with sales before investing in it.</p>
+</div>
+
+<h2>17. Proposed API contract</h2>
+
+<p>Shapes to design and mock against.</p>
+
+<h3>17.1 Requests</h3>
+<pre>GET  /v1/staff/requests?propertyId=&status=open&category=
+  → { "requests": [ {
+        "id": "sr_ms71…", "roomNumber": "412", "category": "maintenance",
+        "description": "shower dripping", "priority": "normal",
+        "status": "open", "createdAt": "2026-07-29T23:14:02Z",
+        "slaDueAt": "2026-07-29T23:59:02Z",
+        "deferred": true, "dispatchAt": "07:00",
+        "assignee": null
+      } ] }
+
+POST /v1/staff/requests/{id}/assign     { "assignee": "staff_42" }
+POST /v1/staff/requests/{id}/status     { "status": "in_progress" | "completed" }</pre>
+
+<p><code>deferred</code> and <code>dispatchAt</code> matter for the UI: a non-urgent request raised
+at 23:14 is deliberately queued for 07:00 so the guest isn't disturbed. Show that clearly &mdash;
+otherwise staff see an old untouched ticket and think the system is broken.</p>
+
+<h3>17.2 Escalations</h3>
+<pre>GET  /v1/staff/escalations?acknowledged=false
+  → { "escalations": [ {
+        "id": "esc_ms71…", "roomNumber": "412",
+        "category": "medical",          // medical | fire | security | welfare | other
+        "severity": "critical",
+        "summary": "Guest reported chest pain",
+        "raisedAt": "2026-07-29T23:14:02Z",
+        "requiresAckWithinS": 120,
+        "acknowledgedAt": null, "acknowledgedBy": null
+      } ] }
+
+POST /v1/staff/escalations/{id}/ack     { "staffId": "staff_42" }</pre>
+
+<h3>17.3 Rooms and devices</h3>
+<pre>GET  /v1/staff/rooms/{roomId}
+  → { "roomNumber": "412", "roomType": "Deluxe King",
+      "state": { "zones": [ { "zone":"bedroom",
+                              "lighting": { "on": true, "brightness": 70 },
+                              "climate":  { "currentC": 24.5, "setpointC": 22.5,
+                                            "minC": 18, "maxC": 26 } } ],
+                 "dnd": "off", "freshness": "fresh" },
+      "openRequests": [ … ], "recentOrders": [ … ],
+      "device": { "deviceId":"d_412a", "online": true, "rssi": -58,
+                  "firmware": "2.4.1", "lastSeen": "…" } }</pre>
+
+<p><code>freshness</code> is worth surfacing: <code>fresh</code> / <code>stale</code> /
+<code>unknown</code>. On <code>unknown</code> the room state could not be read &mdash; show it as
+unknown rather than displaying a stale number as current.</p>
+
+<h3>17.4 Activity log</h3>
+<pre>GET  /v1/staff/turns?roomId=&from=&to=
+  → { "turns": [ {
+        "turnId": "turn_ms71…", "at": "…", "roomNumber": "412",
+        "transcript": "it's freezing in here",     // redacted
+        "response": "I've set it to 22.5 degrees.",
+        "outcome": "success", "escalated": false,
+        "actions": [ { "tool": "climate.set_temperature", "verdict": "ALLOW",
+                       "ruleId": "allow", "result": "applied" } ]
+      } ] }</pre>
+
+<p>This is the dispute-resolution screen. Design it so a duty manager can answer "why did the room
+get cold at 2&nbsp;a.m." in under a minute. Transcripts are redacted and retained ~30 days; action
+records are kept far longer, so a search may return actions with no transcript &mdash; handle that
+gracefully rather than showing an empty row.</p>
+
+<h3>17.5 Configuration and kill switches</h3>
+<pre>GET  /v1/admin/properties/{id}                    // full config
+PUT  /v1/admin/properties/{id}/policy             // temp bands, quiet hours, spend caps
+PUT  /v1/admin/properties/{id}/room-types/{rtId}  // capability manifest
+PUT  /v1/admin/rooms/{roomId}/overrides           // e.g. disable curtains: motor broken
+
+POST /v1/admin/properties/{id}/kill-switch
+     { "disabledTools": ["fnb.place_order"] }     // disable one capability
+     { "tierCeiling": "T0" }                      // read-only mode</pre>
+
+<div class="box warn">
+  <div class="bt">Kill switches are incident tools &mdash; design them for a bad night</div>
+  <p>Someone reaches for these when something is going wrong, possibly at 2&nbsp;a.m., possibly
+  while a manager is on the phone. Requirements: unmistakable current state, obvious blast radius
+  ("this affects all 300 rooms at Whitefield"), a confirmation step, and an equally obvious way to
+  undo. Never bury them in a settings tab.</p>
+</div>
+
+<h2>18. Live updates</h2>
+
+<p>Polling a request queue is the wrong shape &mdash; a housekeeping tablet should buzz within
+seconds. Proposed: Server-Sent Events.</p>
+
+<pre>GET /v1/staff/events?propertyId=p_blr_whitefield
+  Accept: text/event-stream
+
+event: service_request.created
+data: { "id":"sr_…","roomNumber":"412","category":"maintenance","priority":"normal" }
+
+event: escalation.raised
+data: { "id":"esc_…","roomNumber":"412","category":"medical","severity":"critical" }
+
+event: device.offline
+data: { "deviceId":"d_412a","roomNumber":"412" }</pre>
+
+<p>Design for reconnection: SSE drops. On reconnect, refetch the list rather than assuming the
+stream filled every gap.</p>
+
+<h2>19. Permissions model</h2>
+
+<p>The staff API will be the <strong>only</strong> inbound path into the system, so it carries the
+most scrutiny. Roles shape your navigation, so they are worth agreeing early.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:20%">Role</th><th style="width:14%">Scope</th><th>Can</th></tr></thead>
+  <tbody>
+    <tr><td>Housekeeping / maintenance</td><td>One property</td><td>See and update requests assigned to their department</td></tr>
+    <tr><td>Front desk</td><td>One property</td><td>All requests, room view, acknowledge escalations</td></tr>
+    <tr><td>Duty manager</td><td>One property</td><td>Everything above + activity log + kill switches</td></tr>
+    <tr><td>Ops</td><td>Many properties</td><td>Configuration, devices, onboarding</td></tr>
+    <tr><td>Support</td><td>Many, audited</td><td>Read-only activity log</td></tr>
+  </tbody>
+</table>
+
+<p>Every request will be validated against the caller's property claim server-side. Design as if a
+user may hold access to several properties: a property switcher is easier to add now than to
+retrofit.</p>
+
+<h1 class="part"><span class="pn">Part VI</span>Practical</h1>
+
+<h2>20. Running it locally</h2>
+
+<pre class="term">npm install
+npm run gateway        <span class="c"># http://localhost:8443</span>
+
+curl -X POST http://localhost:8443/v1/turn \
+  -H 'content-type: application/json' \
+  -d '{"deviceId":"d_412a","transcript":"turn on the lights"}'</pre>
+
+<p>No API key, no database, no internet. Three seeded devices:</p>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">deviceId</th><th style="width:10%">Room</th><th style="width:18%">Type</th><th>Good for testing</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>Missing capabilities &mdash; no curtains, scenes or music</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td>Everything available</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Capability disabled by config</td></tr>
+  </tbody>
+</table>
+
+<h2>21. Test scenarios</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:40%">Send</th><th style="width:22%">State to exercise</th><th>Watch for</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turn on the lights</td><td>Fast success</td><td>Spinner shouldn't flash at 39&nbsp;ms</td></tr>
+    <tr><td class="mono">it's freezing in here</td><td>Normal success</td><td>Reads state, sets 22.5&nbsp;&deg;C</td></tr>
+    <tr><td class="mono">close the curtains and make it warmer</td><td>Two actions</td><td>Two entries in <code>calls</code></td></tr>
+    <tr><td class="mono">set the temperature to 35 degrees</td><td><strong>Refusal</strong></td><td>200 OK. No error chrome.</td></tr>
+    <tr><td class="mono">I'd like a club sandwich and a beer</td><td><strong>Confirmation</strong></td><td>Total prominent; no auto-confirm</td></tr>
+    <tr><td class="mono">yes</td><td>Confirmed</td><td>State clears</td></tr>
+    <tr><td class="mono">no</td><td>Declined</td><td>Nothing charged</td></tr>
+    <tr><td class="mono">I'm having chest pain</td><td><strong>Escalation</strong></td><td>Persistent, verbatim, number legible</td></tr>
+    <tr><td class="mono">who is staying in room 402</td><td>Privacy refusal</td><td>Neutral tone</td></tr>
+    <tr><td class="mono">close the curtains</td> on <code>d_412a</code><td>Absent capability</td><td>Plain answer, no failure UI</td></tr>
+    <tr><td class="mono">mumble</td> with <code>asrConfidence: 0.4</code><td>Clarify</td><td>Empty <code>calls</code>; invite a retry</td></tr>
+  </tbody>
+</table>
+
+<h2>22. Design checklist</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Area</th><th>Check</th></tr></thead>
+  <tbody>
+    <tr><td>Confirmation</td><td>Total is the largest element · never auto-confirms · visible cancel · expires at 90&nbsp;s</td></tr>
+    <tr><td>Escalation</td><td>Verbatim · persistent · manual dismiss only · emergency number large</td></tr>
+    <tr><td>Refusals</td><td>Neutral, not error chrome · never "access denied"</td></tr>
+    <tr><td>Loading</td><td>Delayed ~150&nbsp;ms so fast turns don't flash</td></tr>
+    <tr><td>Offline / degraded</td><td>Says what still works, not what is broken</td></tr>
+    <tr><td>Accessibility</td><td>Every spoken reply on screen · every function touch-reachable · AA contrast · text scaling · reduced motion</td></tr>
+    <tr><td>Privacy</td><td>LISTENING and MUTED unmistakable from across a dark room</td></tr>
+    <tr><td>Never shown</td><td>Internals, other rooms, card fields, stack traces</td></tr>
+    <tr><td>Staff screens</td><td>SLA countdowns · deferred requests explained · unacknowledged escalations alarm · kill-switch blast radius stated</td></tr>
+  </tbody>
+</table>
+
+<h2>23. Reference data</h2>
+
+<h3>Menu (seeded)</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">ID</th><th style="width:28%">Name</th><th style="width:16%">Price</th><th style="width:24%">Spoken as</th><th>Available</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">m_club</td><td>Club Sandwich</td><td>850 INR</td><td>sandwich, club</td><td>yes</td></tr>
+    <tr><td class="mono">m_dosa</td><td>Masala Dosa</td><td>450 INR</td><td>dosa, south indian</td><td>yes</td></tr>
+    <tr><td class="mono">m_beer</td><td>Kingfisher Premium</td><td>390 INR</td><td>beer, lager</td><td>yes</td></tr>
+    <tr><td class="mono">m_caesar</td><td>Caesar Salad</td><td>620 INR</td><td>salad</td><td><strong>no</strong></td></tr>
+  </tbody>
+</table>
+<p class="small">Aliases exist because a guest ordering "a beer" must not fail because the menu calls
+it "Kingfisher Premium". If you build menu-management UI, that field needs a first-class editor.</p>
+
+<h3>Property policy (seeded)</h3>
+<table class="tight">
+  <tbody>
+    <tr><td style="width:34%">Temperature band</td><td>18&ndash;26&nbsp;&deg;C</td></tr>
+    <tr><td>Quiet hours</td><td>22:00&ndash;07:00, non-urgent requests deferred to morning</td></tr>
+    <tr><td>Spend caps</td><td>6,000 INR per order · 15,000 INR per stay</td></tr>
+    <tr><td>Open requests</td><td>10 per stay, 3 per category</td></tr>
+    <tr><td>Emergency number</td><td>112 (per property &mdash; do not hardcode)</td></tr>
+  </tbody>
+</table>
+
+<h2>24. Decisions needed from you</h2>
+
+<p>The staff API is blocked on two answers. Everything else is ready.</p>
+
+<table>
+  <thead><tr><th style="width:26%">Decision</th><th style="width:36%">Options</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><strong>API style</strong></td><td>REST or GraphQL</td><td>Changes the shape enough that guessing wastes a week. REST is simpler; GraphQL suits a dashboard pulling many entities at once.</td></tr>
+    <tr><td><strong>Identity provider</strong></td><td>Cognito · Auth0 · Google Workspace · something in use</td><td>Determines the login flow you design and how property scoping is carried.</td></tr>
+    <tr><td>Ticket ownership <span class="small">(product, not blocking)</span></td><td>Woohoo owns the queue, or pushes into HotSOS/Quore</td><td>Decides whether the request queue is a working tool or a monitoring view.</td></tr>
+  </tbody>
+</table>
+
+<p>If your sprint has already started, an OpenAPI spec can be produced first so you mock against the
+contract while the implementation lands behind it.</p>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 UI/UX Integration Guide &middot; Guest-surface examples captured from the running service<br>
+Part V is a proposed contract, not an implemented API.
+</p>
+</body>
+</html>

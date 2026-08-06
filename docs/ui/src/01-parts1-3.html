@@ -1,0 +1,322 @@
+<h1 class="part"><span class="pn">Part I</span>The guest surface</h1>
+
+<h2>1. The one call you need</h2>
+
+<pre class="term">POST http://localhost:8443/v1/turn
+content-type: application/json
+
+{ "deviceId": "d_511a", "transcript": "close the curtains and make it warmer" }</pre>
+
+<pre><span class="k">async function</span> sendTurn(deviceId, transcript, asrConfidence = 0.95) {
+  <span class="k">const</span> res = <span class="k">await</span> fetch(<span class="s">'/v1/turn'</span>, {
+    method: <span class="s">'POST'</span>,
+    headers: { <span class="s">'content-type'</span>: <span class="s">'application/json'</span> },
+    body: JSON.stringify({ deviceId, transcript, asrConfidence }),
+  });
+  <span class="k">return</span> res.json();
+}</pre>
+
+<p>Three fields. Note what is <strong>absent</strong>: no room number, no property, no auth token.
+Identity comes from <code>deviceId</code> and the service derives everything else. There is nowhere
+in this API to specify a room, deliberately &mdash; which is also why a guest cannot ask about
+someone else's.</p>
+
+<h2>2. Response contract</h2>
+
+<pre>{
+  <span class="s">"turnId"</span>: <span class="s">"turn_ms6e6b0a0"</span>,
+  <span class="s">"speech"</span>: <span class="s">"Curtains closed. I've set it to 22.5 degrees."</span>,
+  <span class="s">"screen"</span>: <span class="k">null</span>,
+  <span class="s">"lane"</span>: <span class="s">"agentic"</span>,
+  <span class="s">"escalated"</span>: <span class="k">false</span>,
+  <span class="s">"awaitingConfirmation"</span>: <span class="k">false</span>,
+  <span class="s">"degradationLevel"</span>: 0,
+  <span class="s">"totalMs"</span>: 52,
+  <span class="s">"calls"</span>: [
+    { <span class="s">"tool"</span>: <span class="s">"curtains.set"</span>,            <span class="s">"tier"</span>: <span class="s">"T1"</span>, <span class="s">"verdict"</span>: <span class="s">"ALLOW"</span>, <span class="s">"ok"</span>: <span class="k">true</span> },
+    { <span class="s">"tool"</span>: <span class="s">"climate.set_temperature"</span>, <span class="s">"tier"</span>: <span class="s">"T1"</span>, <span class="s">"verdict"</span>: <span class="s">"ALLOW"</span>, <span class="s">"ok"</span>: <span class="k">true</span> }
+  ]
+}</pre>
+
+<table>
+  <thead><tr><th style="width:22%">Field</th><th style="width:16%">Type</th><th>What the UI does with it</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">speech</td><td>string</td><td><strong>The answer.</strong> Display it, speak it, or both. Always short &mdash; capped around 45 words.</td></tr>
+    <tr><td class="mono">screen</td><td>string?</td><td>Present only when the display must carry something the words don't &mdash; an order total, an emergency number. <strong>Render it whenever present.</strong> May contain <code>\n</code>.</td></tr>
+    <tr><td class="mono">awaitingConfirmation</td><td>boolean</td><td><strong>A modal state, not a label.</strong> See &sect;6. Getting this wrong charges guests for things they didn't confirm.</td></tr>
+    <tr><td class="mono">escalated</td><td>boolean</td><td>A human was paged. Surface prominently and persistently. See &sect;7.</td></tr>
+    <tr><td class="mono">degradationLevel</td><td>0&ndash;5</td><td>Non-zero means reduced capability. See &sect;9.</td></tr>
+    <tr><td class="mono">lane</td><td>string</td><td>Diagnostic. <code>fast</code> / <code>agentic</code> / <code>clarify</code> / <code>confirm</code> / <code>degraded</code>. Useful in a debug view; not for guests.</td></tr>
+    <tr><td class="mono">calls[]</td><td>array</td><td>What was attempted and what policy said. Drives &ldquo;what changed&rdquo; affordances.</td></tr>
+    <tr><td class="mono">totalMs</td><td>number</td><td>Server-side duration. Debug views only.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.1 Reading <code>calls[]</code> correctly</h3>
+
+<div class="box warn">
+  <div class="bt">`verdict` and `ok` are two different questions</div>
+  <p><code>verdict</code> asks <em>was it allowed?</em> &nbsp;<code>ok</code> asks <em>did it
+  work?</em></p>
+  <p>A call can be <code>ALLOW</code> with <code>ok: false</code> &mdash; policy permitted it and
+  the room system then failed. That is a genuinely different message to the guest than a refusal,
+  and your UI should not collapse the two.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">verdict</th><th style="width:32%">Means</th><th>UI treatment</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">ALLOW</td><td>Authorised, and executed if <code>ok</code></td><td>Normal success. Show what changed.</td></tr>
+    <tr><td class="mono">CONFIRM</td><td>Frozen, waiting for a spoken yes</td><td>Enter confirmation state (&sect;6)</td></tr>
+    <tr><td class="mono">DENY</td><td>Policy refused it</td><td><strong>Not an error.</strong> Neutral, informative. No red, no alarm icon.</td></tr>
+    <tr><td class="mono">ESCALATE</td><td>Handed to a human</td><td>Prominent, persistent (&sect;7)</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 HTTP status codes</h3>
+<table class="tight">
+  <thead><tr><th style="width:12%">Code</th><th style="width:28%">Meaning</th><th>UI</th></tr></thead>
+  <tbody>
+    <tr><td><strong>200</strong></td><td>Turn completed &mdash; <strong>including refusals</strong></td><td>Render <code>speech</code>. Do not treat as failure.</td></tr>
+    <tr><td>400</td><td>Missing field or bad JSON</td><td>Client bug</td></tr>
+    <tr><td>404</td><td>Unknown or revoked device</td><td>Configuration problem, not a guest problem</td></tr>
+    <tr><td>413</td><td>Body over 16&nbsp;KB</td><td>Cap input length client-side</td></tr>
+    <tr><td>500</td><td>Internal fault</td><td>Honest error; offer the front desk. <strong>Do not auto-retry</strong> &mdash; it may have half-executed.</td></tr>
+  </tbody>
+</table>
+
+<h2>3. The state machine</h2>
+
+<pre class="ascii">
+   ┌──────┐   guest submits   ┌──────────┐   response    ┌──────────┐
+   │ IDLE │──────────────────►│ THINKING │──────────────►│ ANSWERED │
+   └──────┘                   └──────────┘               └────┬─────┘
+      ▲                                                       │
+      │                              awaitingConfirmation ────┤
+      │                                                       ▼
+      │                                              ┌────────────────┐
+      │◄─── yes / no / 90s expiry ────────────────────│  CONFIRMING    │
+      │                                              └────────────────┘
+      │                                                       │
+      │                              escalated ───────────────┤
+      │                                                       ▼
+      │                                              ┌────────────────┐
+      └◄──── manual dismiss only ─────────────────────│   ESCALATED    │
+                                                     └────────────────┘
+
+   Cross-cutting: DEGRADED (degradationLevel ≥ 2) · OFFLINE (network) · ERROR (5xx)
+</pre>
+
+<div class="box note">
+  <div class="bt">Two states have hard rules attached</div>
+  <p><strong>CONFIRMING</strong> must not auto-advance, and <strong>ESCALATED</strong> must not
+  auto-dismiss. Everything else is your call.</p>
+</div>
+
+<h2>4. Worked examples</h2>
+
+<p>All captured from the running service.</p>
+
+<h3>4.1 Simple success</h3>
+<pre class="term">POST { "deviceId":"d_412a", "transcript":"turn on the lights" }
+
+{ "speech":"Done.", "lane":"fast", "totalMs":39,
+  "calls":[{ "tool":"lighting.set","tier":"T1","verdict":"ALLOW","ok":true }] }</pre>
+<p class="small">39&nbsp;ms because it never touched the AI &mdash; common requests are handled
+deterministically. Your loading state may barely appear; design for that.</p>
+
+<h3>4.2 Two things at once</h3>
+<pre class="term">POST { "transcript":"close the curtains and make it warmer" }
+
+{ "speech":"Curtains closed. I've set it to 22.5 degrees.",
+  "calls":[ curtains.set ALLOW ok, climate.set_temperature ALLOW ok ] }</pre>
+<p class="small">One sentence, two actions, one reply. If you show &ldquo;what changed&rdquo; chips,
+this produces two.</p>
+
+<h3>4.3 A refusal &mdash; design this as information</h3>
+<pre class="term">POST { "transcript":"set the temperature to 35 degrees" }
+
+{ "speech":"I couldn't do that just now. Would you like me to connect you to
+            the front desk?",
+  "calls":[{ "tool":"climate.set_temperature","verdict":"DENY",
+             "ruleId":"R6.out_of_bounds","ok":false }] }</pre>
+<p class="small">HTTP 200. The hotel permits 18&ndash;26&nbsp;&deg;C. Nothing is broken &mdash; do
+not show an error chrome.</p>
+
+<h3>4.4 Something that costs money</h3>
+<pre class="term">POST { "transcript":"I'd like a club sandwich and a beer" }
+
+{ "speech":"I have 2 items ready to order. That's 1240 INR, charged to your room.
+            Shall I place it?",
+  "screen":"I have 2 items ready to order. That's 1240 INR, charged to your room.",
+  "awaitingConfirmation": true,
+  "calls":[{ "tool":"fnb.place_order","tier":"T3","verdict":"CONFIRM","ok":false }] }</pre>
+<p class="small"><strong>Nothing has been ordered.</strong> <code>ok:false</code> is correct here
+&mdash; it was frozen, not executed.</p>
+
+<h3>4.5 The confirming turn</h3>
+<pre class="term">POST { "transcript":"yes" }
+
+{ "speech":"Ordered — about 30 minutes. 1240 INR has gone to your room bill.",
+  "lane":"confirm", "awaitingConfirmation": false,
+  "calls":[{ "tool":"fnb.place_order","verdict":"ALLOW",
+             "ruleId":"R11.confirmation_redeemed","ok":true }] }</pre>
+
+<h3>4.6 An emergency</h3>
+<pre class="term">POST { "transcript":"I'm having chest pain" }
+
+{ "speech":"I'm alerting the hotel team right now. If this is an emergency please
+            call 112 — I'm not able to call them for you. I'll stay here with you.",
+  "screen":"Emergency: 112\nHotel team alerted",
+  "escalated": true,
+  "calls":[{ "tool":"staff.escalate_urgent","tier":"T4","verdict":"ESCALATE" }] }</pre>
+
+<h1 class="part"><span class="pn">Part II</span>States you must handle</h1>
+
+<h2>5. Conversation states</h2>
+
+<table>
+  <thead><tr><th style="width:16%">State</th><th style="width:26%">Detect by</th><th style="width:32%">Show</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Thinking</strong></td><td>Request in flight</td><td>Activity indicator</td><td>May last 30&nbsp;ms or 2&nbsp;s. Avoid a heavy animation that flashes.</td></tr>
+    <tr><td><strong>Answered</strong></td><td>Response, no flags</td><td><code>speech</code>, plus <code>screen</code> if present</td><td>Optionally chips for what changed</td></tr>
+    <tr><td><strong>Confirming</strong></td><td><code>awaitingConfirmation</code></td><td>Total, prominent + yes/no</td><td>&sect;6 &mdash; strict rules</td></tr>
+    <tr><td><strong>Escalated</strong></td><td><code>escalated</code></td><td>Persistent banner, emergency number</td><td>&sect;7 &mdash; strict rules</td></tr>
+    <tr><td><strong>Clarifying</strong></td><td><code>lane === "clarify"</code></td><td>The question, invite a retry</td><td>Empty <code>calls</code>. Nothing was done.</td></tr>
+    <tr><td><strong>Degraded</strong></td><td><code>degradationLevel &ge; 2</code></td><td>Subtle notice of reduced capability</td><td>&sect;9</td></tr>
+    <tr><td><strong>Offline</strong></td><td>Network failure</td><td>What still works</td><td>&sect;9</td></tr>
+  </tbody>
+</table>
+
+<h2>6. Confirmation &mdash; the critical one</h2>
+
+<div class="box warn">
+  <div class="bt">Three rules, and they are not negotiable</div>
+  <ol>
+    <li><strong>Never auto-confirm.</strong> Not on timeout, not on ambiguity, not on a "seems
+    fine" heuristic. Only an explicit affirmative from the guest.</li>
+    <li><strong>Always show the total.</strong> The guest is agreeing to a charge on their room
+    bill. The screen is the record they can read and re-read; the spoken sentence is not.</li>
+    <li><strong>Always offer a way out.</strong> A visible cancel, not just "say no".</li>
+  </ol>
+</div>
+
+<div class="wire">
+  <div class="wt">Suggested layout &mdash; confirmation</div>
+<pre class="ascii">
+  ┌────────────────────────────────────────────────┐
+  │  Confirm your order                            │
+  │                                                │
+  │  2 items                                       │
+  │  ┌──────────────────────────────────────────┐  │
+  │  │            ₹1,240                        │  │  ← largest element
+  │  │       charged to your room               │  │     on the screen
+  │  └──────────────────────────────────────────┘  │
+  │                                                │
+  │  [  Yes, place it  ]     [  Cancel  ]          │
+  │                                                │
+  │  Expires in 1:23                               │  ← optional but honest
+  └────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<h3>6.1 The 90-second expiry</h3>
+<p>The frozen action expires server-side after 90 seconds regardless of what your UI does. A late
+"yes" is therefore safe &mdash; the guest is told it expired and nothing is charged. Mirror the
+expiry in your UI so the two do not disagree, and clear the state on expiry rather than leaving a
+stale confirm button.</p>
+
+<div class="box info">
+  <div class="bt">Why "yes" cannot be misinterpreted</div>
+  <p>When the guest confirms, the platform executes <strong>the exact action it froze</strong>
+  &mdash; it does not re-read their words. So even if someone said "yes, and make it ten
+  sandwiches", the ten does not happen. Useful to know when designing the copy: the confirm step
+  is a yes/no gate, not a place to amend the order.</p>
+</div>
+
+<h2>7. Escalation &mdash; the other critical one</h2>
+
+<div class="box warn">
+  <div class="bt">Do not edit, shorten, summarise or translate this wording</div>
+  <p>Escalation text is a <strong>compliance artefact</strong>, not copy. It states plainly what the
+  system <em>cannot</em> do &mdash; because a guest who believes an ambulance is coming when it is
+  not is the worst outcome this product can produce.</p>
+  <p>Render <code>speech</code> and <code>screen</code> verbatim. Do not add your own reassurance
+  on top, and do not replace "I'm not able to call them for you" with something softer.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Requirement</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Persistent</td><td><strong>Never auto-dismiss.</strong> Requires explicit user action to clear.</td></tr>
+    <tr><td>Prominent</td><td>Highest-priority element. It outranks anything else on screen.</td></tr>
+    <tr><td>Emergency number legible</td><td>Large. It arrives in <code>screen</code> and comes from property config &mdash; it is not always 112.</td></tr>
+    <tr><td>Verbatim</td><td>No paraphrasing, no truncation, no ellipsis.</td></tr>
+    <tr><td>Stays interactive</td><td>The guest can keep talking. Do not lock the interface.</td></tr>
+  </tbody>
+</table>
+
+<div class="wire">
+  <div class="wt">Suggested layout &mdash; escalation</div>
+<pre class="ascii">
+  ┌────────────────────────────────────────────────┐
+  │  ● Hotel team alerted                          │  ← persistent, not a toast
+  │                                                │
+  │  ┌──────────────────────────────────────────┐  │
+  │  │  Emergency:  112                         │  │  ← large, unmissable
+  │  └──────────────────────────────────────────┘  │
+  │                                                │
+  │  "I'm alerting the hotel team right now. If    │
+  │   this is an emergency please call 112 — I'm   │  ← verbatim
+  │   not able to call them for you. I'll stay     │
+  │   here with you."                              │
+  │                                        [ OK ]  │  ← manual dismiss only
+  └────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<h2>8. Refusals and limits</h2>
+
+<p>Refusals are frequent and intentional. Treated as errors, the interface will feel broken when it
+is working exactly as designed.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:32%">Guest asks for</th><th style="width:30%">What happens</th><th>Design as</th></tr></thead>
+  <tbody>
+    <tr><td>A temperature outside the hotel's band</td><td><code>DENY</code>, <code>R6.out_of_bounds</code></td><td>Neutral information</td></tr>
+    <tr><td>Something their room type doesn't have</td><td>No tool exists; a plain spoken answer</td><td>Neutral information</td></tr>
+    <tr><td>Another guest's details</td><td>Refusal &mdash; structurally impossible to answer</td><td>Neutral. <strong>Never</strong> "access denied" framing</td></tr>
+    <tr><td>The door unlocked</td><td>Refusal; no such capability exists at any level</td><td>Neutral, with the front desk offered</td></tr>
+    <tr><td>Too many changes too fast</td><td><code>DENY</code>, rate limit</td><td>Gentle, temporary</td></tr>
+    <tr><td>An order over the spend cap</td><td><code>DENY</code>, spend rule</td><td>Neutral, offer the front desk</td></tr>
+  </tbody>
+</table>
+
+<div class="box copy">
+  <div class="bt">Tone</div>
+  <p>The service already words refusals well &mdash; "I can only help with your own room." Your job
+  is not to improve on it but to <strong>not wrap it in alarming chrome</strong>. No red, no warning
+  triangle, no "Error" heading. It is an answer, not a fault.</p>
+</div>
+
+<h2>9. Degraded and offline</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:10%">Level</th><th style="width:30%">What happened</th><th>Guest sees</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>Normal</td><td>Nothing</td></tr>
+    <tr><td>1</td><td>AI slow</td><td>Nothing &mdash; handled invisibly</td></tr>
+    <tr><td>2</td><td>AI unavailable</td><td>Simple requests still work; reply names what still works</td></tr>
+    <tr><td>3</td><td>Speech unavailable</td><td><strong>Screen becomes the primary interface</strong></td></tr>
+    <tr><td>4</td><td>Internet down</td><td>Lights, temperature, DND still work locally</td></tr>
+    <tr><td>5</td><td>Everything down</td><td>Honest message pointing at the room phone</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">The pattern to follow throughout</div>
+  <p><strong>Say what still works, not what is broken.</strong> "I can help with lights, temperature
+  and do-not-disturb right now" keeps the guest using the product. "Sorry, I'm having trouble"
+  teaches them to stop trying. The backend already words its degraded replies this way &mdash;
+  match it in your own offline and error states.</p>
+</div>

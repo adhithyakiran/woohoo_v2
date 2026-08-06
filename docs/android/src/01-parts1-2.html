@@ -1,0 +1,373 @@
+<h1 class="part"><span class="pn">Part I</span>Foundations</h1>
+
+<h2>1. Who owns what</h2>
+
+<p>The split is deliberate: <strong>you own sound, we own meaning.</strong> Nothing about
+understanding, deciding or authorising lives on the device, and nothing about microphones or
+speakers lives in the cloud.</p>
+
+<table>
+  <thead><tr><th style="width:40%">Device (you)</th><th style="width:40%">Service (us)</th><th style="width:20%">Why there</th></tr></thead>
+  <tbody>
+    <tr><td>Wake word detection</td><td>&mdash;</td><td>Privacy. No audio may leave the room before the wake phrase fires.</td></tr>
+    <tr><td>Echo cancellation, beamforming</td><td>&mdash;</td><td>Needs the raw mic array; must run before the signal leaves the mic path or barge-in is impossible.</td></tr>
+    <tr><td>Voice activity detection, endpointing</td><td>&mdash;</td><td>Signalling end-of-turn locally saves 200&ndash;400&nbsp;ms versus a cloud silence timer.</td></tr>
+    <tr><td>Speech-to-text <em>(today)</em></td><td>Speech-to-text <em>(phase 2)</em></td><td>See &sect;16.</td></tr>
+    <tr><td>&mdash;</td><td>Intent, reasoning, decisions</td><td>Changes weekly. Must not require an APK release.</td></tr>
+    <tr><td>&mdash;</td><td>Authorisation, spend limits, safety</td><td>Must be centrally auditable and instantly changeable.</td></tr>
+    <tr><td>&mdash;</td><td>Talking to hotel systems</td><td>Vendor differences must never reach the device.</td></tr>
+    <tr><td>&mdash;</td><td>Every word the assistant says</td><td>Wording is a compliance artefact in some paths (&sect;14).</td></tr>
+    <tr><td>Playback, screen rendering</td><td>Screen <em>content</em></td><td>Server decides what to show; device decides how.</td></tr>
+    <tr><td>Offline fallback</td><td>&mdash;</td><td>Must work with no network at all.</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">One rule that explains many others</div>
+  <p><strong>The device never sends a room number, and never receives one it can act on.</strong>
+  Identity is established once, at connection time, and the service derives tenant, property and
+  room from it. If you ever find yourself wanting to put a room in a message, something has gone
+  wrong &mdash; and there is nowhere in the protocol to put it.</p>
+</div>
+
+<h2>2. Running the service locally</h2>
+
+<p>You do not need a hotel, an API key, a database or the internet.</p>
+
+<pre class="term">git clone &lt;repo&gt; &amp;&amp; cd woohoo
+npm install
+npm run gateway
+
+<span class="c"># device-gateway listening on ws://localhost:8443</span></pre>
+
+<p>Three devices are seeded, and they differ on purpose so you can test capability behaviour:</p>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">deviceId</th><th style="width:10%">Room</th><th style="width:20%">Type</th><th>Use it for</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">d_412a</td><td>412</td><td>Deluxe King</td><td>A room with <strong>no curtains, no scenes, no music</strong> &mdash; test how absent capabilities behave</td></tr>
+    <tr><td class="mono">d_511a</td><td>511</td><td>Suite</td><td>Everything available</td></tr>
+    <tr><td class="mono">d_512a</td><td>512</td><td>Suite</td><td>Suite whose curtains are disabled by config &mdash; tests per-room overrides</td></tr>
+  </tbody>
+</table>
+
+<p>Quickest possible smoke test, no app required:</p>
+
+<pre class="term">curl -X POST http://localhost:8443/v1/turn \
+  -H 'content-type: application/json' \
+  -d '{"deviceId":"d_412a","transcript":"turn on the lights"}'
+
+{"turnId":"turn_…","speech":"Done.","lane":"fast","totalMs":39,
+ "calls":[{"tool":"lighting.set","tier":"T1","verdict":"ALLOW","ok":true}]}</pre>
+
+<p>From your emulator, <code>localhost</code> is <code>10.0.2.2</code>. For a physical device on
+the same Wi-Fi, use the machine's LAN IP.</p>
+
+<h2>3. Message reference</h2>
+
+<h3>3.1 You send</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">type</th><th style="width:34%">Fields</th><th style="width:12%">When</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">hello</td><td><code>deviceId</code> req · <code>firmware</code> · <code>certificateSerial</code></td><td>First frame, always</td><td>Anything sent before this is rejected with <code>NOT_AUTHENTICATED</code></td></tr>
+    <tr><td class="mono">turn</td><td><code>transcript</code> req · <code>asrConfidence</code></td><td>Per utterance</td><td>The main message</td></tr>
+    <tr><td class="mono">barge_in</td><td>&mdash;</td><td>Guest speaks over playback</td><td>Stop playback locally too &mdash; don't wait for us</td></tr>
+    <tr><td class="mono">health</td><td><code>rssi</code> · <code>wakeFalseAccepts</code></td><td>Every few minutes</td><td>A rising false-accept count usually means the device sits next to a TV</td></tr>
+    <tr><td class="mono">ping</td><td>&mdash;</td><td>Optional</td><td>Answered with <code>pong</code>. Separate from protocol-level pings</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 You receive</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:14%">type</th><th style="width:36%">Fields</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">ready</td><td><code>property</code> <code>room</code> <code>assistantName</code> <code>phrasePackVersion</code></td><td>Store them. Use <code>assistantName</code> for branding, <code>phrasePackVersion</code> to decide whether to refresh cached audio</td></tr>
+    <tr><td class="mono">ack</td><td><code>filledPause</code></td><td><strong>Play immediately.</strong> Do not wait for <code>speak</code></td></tr>
+    <tr><td class="mono">speak</td><td><code>text</code> <code>turnId</code></td><td>Synthesise and play. Always short &mdash; capped around 45 words</td></tr>
+    <tr><td class="mono">screen</td><td><code>text</code></td><td>Render. May contain <code>\n</code>. Present only when the display carries something the audio does not</td></tr>
+    <tr><td class="mono">error</td><td><code>code</code> <code>detail</code></td><td>See &sect;7</td></tr>
+    <tr><td class="mono">pong</td><td>&mdash;</td><td>Liveness reply</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">There is no request ID, and you don't need one</div>
+  <p>The connection is per-device and turns are serialised &mdash; one <code>turn</code> in, one
+  <code>ack</code> plus one <code>speak</code> out. The <code>turnId</code> on the response is what
+  you log against. Do not send a second <code>turn</code> before the first has produced
+  <code>speak</code>; queue it or drop it.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part II</span>The client</h1>
+
+<h2>4. Complete WoohooClient</h2>
+
+<p>Production-shaped, using OkHttp, which is already in your <code>build.gradle</code>. No new
+dependency.</p>
+
+<pre><span class="k">package</span> com.sb.woohoo.net
+
+<span class="k">import</span> android.os.Handler
+<span class="k">import</span> android.os.Looper
+<span class="k">import</span> okhttp3.*
+<span class="k">import</span> org.json.JSONObject
+<span class="k">import</span> java.util.concurrent.TimeUnit
+<span class="k">import</span> java.util.concurrent.atomic.AtomicBoolean
+
+<span class="c">/**
+ * Single long-lived connection to the Woohoo service.
+ *
+ * Lifecycle: connect() once when the app starts, disconnect() when it stops.
+ * NOT one connection per utterance — see §5.
+ */</span>
+<span class="k">class</span> WoohooClient(
+    <span class="k">private val</span> deviceId: String,
+    <span class="k">private val</span> endpoint: String,
+    <span class="k">private val</span> firmware: String,
+    <span class="k">private val</span> listener: Listener,
+) {
+    <span class="k">interface</span> Listener {
+        <span class="c">/** Identity accepted. Safe to accept utterances from here. */</span>
+        <span class="k">fun</span> onReady(property: String, room: String, assistantName: String, phrasePackVersion: String)
+        <span class="c">/** Play from the local phrase pack IMMEDIATELY. Do not wait for onSpeak. */</span>
+        <span class="k">fun</span> onAck(filledPause: String)
+        <span class="c">/** The real answer. Synthesise and play. */</span>
+        <span class="k">fun</span> onSpeak(text: String, turnId: String)
+        <span class="k">fun</span> onScreen(text: String)
+        <span class="k">fun</span> onError(code: String, detail: String, fatal: Boolean)
+        <span class="k">fun</span> onConnectionStateChanged(state: State)
+    }
+
+    <span class="k">enum class</span> State { DISCONNECTED, CONNECTING, READY }
+
+    <span class="k">private val</span> http = OkHttpClient.Builder()
+        <span class="c">// Hotel Wi-Fi drops connections without a close frame. Keepalives detect it.</span>
+        .pingInterval(20, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.SECONDS)   <span class="c">// 0 = never; the socket is long-lived</span>
+        .retryOnConnectionFailure(<span class="k">true</span>)
+        .build()
+
+    <span class="k">private var</span> ws: WebSocket? = <span class="k">null</span>
+    <span class="k">private var</span> retries = 0
+    <span class="k">private val</span> shuttingDown = AtomicBoolean(<span class="k">false</span>)
+    <span class="k">private val</span> main = Handler(Looper.getMainLooper())
+
+    <span class="k">var</span> state: State = State.DISCONNECTED
+        <span class="k">private set</span>(value) {
+            field = value
+            main.post { listener.onConnectionStateChanged(value) }
+        }
+
+    <span class="k">val</span> isReady: Boolean <span class="k">get</span>() = state == State.READY
+
+    <span class="c">// ─────────────────────────────────────────────────────── lifecycle</span>
+
+    <span class="k">fun</span> connect() {
+        <span class="k">if</span> (shuttingDown.get() || state != State.DISCONNECTED) <span class="k">return</span>
+        state = State.CONNECTING
+
+        <span class="k">val</span> request = Request.Builder().url(endpoint).build()
+        ws = http.newWebSocket(request, <span class="k">object</span> : WebSocketListener() {
+
+            <span class="k">override fun</span> onOpen(webSocket: WebSocket, response: Response) {
+                <span class="c">// hello MUST be first. Everything else is rejected until identity exists.</span>
+                webSocket.send(
+                    JSONObject()
+                        .put(<span class="s">"type"</span>, <span class="s">"hello"</span>)
+                        .put(<span class="s">"deviceId"</span>, deviceId)
+                        .put(<span class="s">"firmware"</span>, firmware)
+                        .toString()
+                )
+            }
+
+            <span class="k">override fun</span> onMessage(webSocket: WebSocket, text: String) {
+                handle(text)
+            }
+
+            <span class="k">override fun</span> onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                state = State.DISCONNECTED
+                scheduleReconnect()
+            }
+
+            <span class="k">override fun</span> onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                state = State.DISCONNECTED
+                <span class="k">if</span> (!shuttingDown.get()) scheduleReconnect()
+            }
+        })
+    }
+
+    <span class="k">fun</span> disconnect() {
+        shuttingDown.set(<span class="k">true</span>)
+        ws?.close(1000, <span class="s">"client shutdown"</span>)
+        ws = <span class="k">null</span>
+        state = State.DISCONNECTED
+    }
+
+    <span class="c">// ─────────────────────────────────────────────────────── sending</span>
+
+    <span class="c">/**
+     * Send one transcribed utterance.
+     *
+     * @param asrConfidence the REAL score from the recogniser. Below 0.60 the service asks
+     *        the guest to repeat rather than guessing at a physical action; a hardcoded
+     *        constant makes it guess when it shouldn't.
+     * @return false if not connected — show the offline affordance (§17).
+     */</span>
+    <span class="k">fun</span> sendTurn(transcript: String, asrConfidence: Double): Boolean {
+        <span class="k">if</span> (!isReady) <span class="k">return false</span>
+        <span class="k">if</span> (transcript.isBlank()) <span class="k">return false</span>
+        <span class="k">return</span> ws?.send(
+            JSONObject()
+                .put(<span class="s">"type"</span>, <span class="s">"turn"</span>)
+                .put(<span class="s">"transcript"</span>, transcript.take(2000))
+                .put(<span class="s">"asrConfidence"</span>, asrConfidence.coerceIn(0.0, 1.0))
+                .toString()
+        ) ?: <span class="k">false</span>
+    }
+
+    <span class="k">fun</span> sendBargeIn() {
+        ws?.send(JSONObject().put(<span class="s">"type"</span>, <span class="s">"barge_in"</span>).toString())
+    }
+
+    <span class="k">fun</span> sendHealth(rssi: Int, wakeFalseAccepts: Int) {
+        ws?.send(
+            JSONObject()
+                .put(<span class="s">"type"</span>, <span class="s">"health"</span>)
+                .put(<span class="s">"rssi"</span>, rssi)
+                .put(<span class="s">"wakeFalseAccepts"</span>, wakeFalseAccepts)
+                .toString()
+        )
+    }
+
+    <span class="c">// ─────────────────────────────────────────────────────── receiving</span>
+
+    <span class="k">private fun</span> handle(text: String) {
+        <span class="k">val</span> msg = <span class="k">try</span> { JSONObject(text) } <span class="k">catch</span> (e: Exception) { <span class="k">return</span> }
+        main.post {
+            <span class="k">when</span> (msg.optString(<span class="s">"type"</span>)) {
+                <span class="s">"ready"</span> -&gt; {
+                    retries = 0
+                    state = State.READY
+                    listener.onReady(
+                        msg.optString(<span class="s">"property"</span>),
+                        msg.optString(<span class="s">"room"</span>),
+                        msg.optString(<span class="s">"assistantName"</span>, <span class="s">"Voice Genie"</span>),
+                        msg.optString(<span class="s">"phrasePackVersion"</span>),
+                    )
+                }
+                <span class="s">"ack"</span>    -&gt; listener.onAck(msg.optString(<span class="s">"filledPause"</span>))
+                <span class="s">"speak"</span>  -&gt; listener.onSpeak(msg.optString(<span class="s">"text"</span>), msg.optString(<span class="s">"turnId"</span>))
+                <span class="s">"screen"</span> -&gt; listener.onScreen(msg.optString(<span class="s">"text"</span>))
+                <span class="s">"error"</span>  -&gt; {
+                    <span class="k">val</span> code = msg.optString(<span class="s">"code"</span>)
+                    <span class="c">// UNKNOWN_DEVICE means the socket is closed and retrying is pointless —</span>
+                    <span class="c">// this is a provisioning problem, not a network one.</span>
+                    listener.onError(code, msg.optString(<span class="s">"detail"</span>), fatal = code == <span class="s">"UNKNOWN_DEVICE"</span>)
+                    <span class="k">if</span> (code == <span class="s">"UNKNOWN_DEVICE"</span>) shuttingDown.set(<span class="k">true</span>)
+                }
+            }
+        }
+    }
+
+    <span class="c">// ─────────────────────────────────────────────────────── reconnection</span>
+
+    <span class="c">/**
+     * Exponential backoff with FULL jitter, capped at 60s.
+     *
+     * The jitter is not optional. Without it, a property-wide Wi-Fi blip makes 300 devices
+     * reconnect in lockstep and you have caused your own outage. Random across the whole
+     * window, not "base + random" — that still clusters.
+     */</span>
+    <span class="k">private fun</span> scheduleReconnect() {
+        <span class="k">if</span> (shuttingDown.get()) <span class="k">return</span>
+        <span class="k">val</span> capMs = minOf(1000L shl minOf(retries, 6), 60_000L)
+        retries++
+        <span class="k">val</span> delay = (Math.random() * capMs).toLong().coerceAtLeast(250L)
+        main.postDelayed({ connect() }, delay)
+    }
+}</pre>
+
+<h2>5. Connection lifecycle</h2>
+
+<pre class="ascii">
+  app start ──► connect() ──► onOpen ──► send hello ──► ready ──► State.READY
+                    ▲                                                │
+                    │                                                │ utterances flow
+                    │                                                │ here, many of them,
+                    │                                                │ on the SAME socket
+                    │                                                ▼
+                    └──── scheduleReconnect() ◄──── onFailure / onClosed
+                          (jittered backoff)
+
+  app stop ──► disconnect()      shuttingDown = true, no reconnect
+</pre>
+
+<p>Bind it to the process, not to an activity or a turn. On a dedicated in-room device the natural
+home is a foreground service that lives as long as the app.</p>
+
+<pre><span class="k">class</span> VoiceService : Service(), WoohooClient.Listener {
+    <span class="k">private lateinit var</span> client: WoohooClient
+
+    <span class="k">override fun</span> onCreate() {
+        <span class="k">super</span>.onCreate()
+        client = WoohooClient(
+            deviceId = DeviceIdentity.current(<span class="k">this</span>),
+            endpoint = BuildConfig.WOOHOO_WS_URL,
+            firmware = BuildConfig.VERSION_NAME,
+            listener = <span class="k">this</span>,
+        )
+        client.connect()   <span class="c">// once. not per turn.</span>
+    }
+
+    <span class="k">override fun</span> onDestroy() {
+        client.disconnect()
+        <span class="k">super</span>.onDestroy()
+    }
+}</pre>
+
+<div class="box warn">
+  <div class="bt">Why one connection matters, with the arithmetic</div>
+  <p>Before a single byte moves, opening a connection costs <strong>three network round
+  trips</strong>: TCP handshake, TLS handshake, WebSocket upgrade. On hotel Wi-Fi a round trip is
+  typically 40&ndash;100&nbsp;ms, so that is <strong>120&ndash;300&nbsp;ms of pure overhead</strong>
+  &mdash; paid on every utterance, forever, buying nothing.</p>
+  <p>Against a p50 budget of about 1,100&nbsp;ms wake-to-response, that is a quarter of your budget
+  spent dialling. Open it once.</p>
+</div>
+
+<h2>6. Reconnection and jitter</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Situation</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Socket drops</td><td>Reconnect with jittered backoff, 250&nbsp;ms &rarr; 60&nbsp;s cap. Re-send <code>hello</code>.</td></tr>
+    <tr><td>Reconnect within 30 min</td><td>Conversation context survives server-side, keyed on the room. A brief drop mid-conversation loses nothing.</td></tr>
+    <tr><td>Reconnect after a pending confirmation</td><td>The frozen action expires after <strong>90 s</strong> regardless. If the guest says "yes" later, they are told it expired and nothing is charged.</td></tr>
+    <tr><td><code>UNKNOWN_DEVICE</code></td><td><strong>Stop.</strong> This is provisioning, not networking. Retrying forever hides the real fault. Show a service state on screen.</td></tr>
+    <tr><td>Offline for a long period</td><td>Enter offline mode (&sect;17). Keep trying in the background at the 60&nbsp;s cap.</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Error handling</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">code</th><th style="width:34%">Meaning</th><th>Do</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">NOT_AUTHENTICATED</td><td>A frame arrived before <code>hello</code></td><td>Client bug. Send <code>hello</code>, retry once.</td></tr>
+    <tr><td class="mono">UNKNOWN_DEVICE</td><td>Unknown, revoked, or room binding broken</td><td><strong>Fatal.</strong> Socket closes. Stop retrying; show a service message.</td></tr>
+    <tr><td class="mono">RATE_LIMITED</td><td>&gt;30 turns from this device in an hour</td><td>Say something apologetic; back off a few minutes.</td></tr>
+    <tr><td class="mono">BAD_FRAME</td><td>Not valid JSON</td><td>Client bug. Log it.</td></tr>
+    <tr><td class="mono">TURN_FAILED</td><td>The turn threw server-side</td><td>Say something honest and offer the front desk. Do not auto-retry &mdash; it may have half-executed.</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">Never invent an outcome</div>
+  <p>On any error, do <strong>not</strong> say "Done". The single most damaging failure mode in this
+  product is the confident false confirmation: the guest hears "I've turned off the lights", the
+  lights stay on, and the device is dead to them. If you don't have a <code>speak</code>, say you
+  couldn't do it.</p>
+</div>

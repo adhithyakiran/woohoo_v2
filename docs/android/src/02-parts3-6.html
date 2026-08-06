@@ -1,0 +1,482 @@
+<h1 class="part"><span class="pn">Part III</span>Audio</h1>
+
+<h2>8. Wake word and the pre-roll buffer</h2>
+
+<p>Keep Sensory. What matters is what happens in the 500&nbsp;ms <em>around</em> the trigger.</p>
+
+<pre class="ascii">
+  continuous mic ──► AEC ──► ring buffer (500ms, circular, RAM only)
+                              │
+                              ├──► Sensory wake word
+                              │      │
+                              │      └─ fires ──► flush ring buffer into the recogniser FIRST,
+                              │                   then continue live. Without this the first
+                              │                   syllable after the wake phrase is clipped and
+                              │                   "…urn on the lights" reaches the transcriber.
+                              │
+                              └──► if no trigger: buffer is overwritten and discarded.
+                                   Nothing is ever written to disk. This is what makes
+                                   "we are not recording the room" a true statement.
+</pre>
+
+<pre><span class="k">class</span> PreRollBuffer(<span class="k">private val</span> capacityMs: Int = 500, sampleRate: Int = 16_000) {
+    <span class="k">private val</span> capacity = capacityMs * sampleRate / 1000
+    <span class="k">private val</span> buf = ShortArray(capacity)
+    <span class="k">private var</span> writeIdx = 0
+    <span class="k">private var</span> filled = 0
+
+    <span class="k">fun</span> write(samples: ShortArray, len: Int) {
+        <span class="k">for</span> (i <span class="k">in</span> 0 <span class="k">until</span> len) {
+            buf[writeIdx] = samples[i]
+            writeIdx = (writeIdx + 1) % capacity
+            <span class="k">if</span> (filled &lt; capacity) filled++
+        }
+    }
+
+    <span class="c">/** Oldest-to-newest snapshot, for flushing on wake. */</span>
+    <span class="k">fun</span> drain(): ShortArray {
+        <span class="k">val</span> out = ShortArray(filled)
+        <span class="k">val</span> start = <span class="k">if</span> (filled &lt; capacity) 0 <span class="k">else</span> writeIdx
+        <span class="k">for</span> (i <span class="k">in</span> 0 <span class="k">until</span> filled) out[i] = buf[(start + i) % capacity]
+        clear()
+        <span class="k">return</span> out
+    }
+
+    <span class="c">/** No trigger — the audio is gone. Called continuously. */</span>
+    <span class="k">fun</span> clear() { filled = 0; writeIdx = 0 }
+}</pre>
+
+<div class="box warn">
+  <div class="bt">Privacy properties you must preserve</div>
+  <ul>
+    <li>The ring buffer lives in <strong>RAM only</strong>. Never write it to storage, not even for
+    debugging, not even behind a flag.</li>
+    <li>Nothing leaves the device until the wake word fires.</li>
+    <li>The hardware mute must cut the microphone <strong>in the driver</strong>, not set a boolean.
+    A software mute cannot be verified by a guest, and a guest who doesn't trust the mute stops
+    using the product.</li>
+    <li>The privacy LED should not be drivable by app code alone.</li>
+  </ul>
+</div>
+
+<h2>9. Playback, ack and the phrase pack</h2>
+
+<p>This section is the difference between a device that feels instant and one guests assume is
+broken. It is worth more than any latency optimisation in the backend.</p>
+
+<h3>9.1 Measured, on our own stack</h3>
+
+<pre class="term"><span class="c">// realistic model latency</span>
+guest stops speaking          at    0ms
+ack   "Let me sort that—"     at    2ms   <span class="g">← the device speaks HERE</span>
+speak "I've set it to 22.5"   at 1846ms
+
+silence the guest experiences :    2ms
+silence WITHOUT the ack       : 1846ms   <span class="r">(877x longer)</span></pre>
+
+<p>Identical work, identical total time. Completely different experience.</p>
+
+<h3>9.2 How to implement it</h3>
+
+<p><code>filledPause</code> is a <strong>short phrase you already have audio for</strong>. It is not
+something to synthesise on receipt &mdash; synthesising it would defeat the entire purpose.</p>
+
+<pre><span class="k">class</span> PhrasePack(<span class="k">private val</span> ctx: Context) {
+    <span class="k">private val</span> cache = mutableMapOf&lt;String, Uri&gt;()
+
+    <span class="c">/** Pre-synthesised WAV/OGG shipped or fetched per (voice, language). */</span>
+    <span class="k">fun</span> lookup(phrase: String): Uri? = cache[normalise(phrase)]
+
+    <span class="k">fun</span> play(phrase: String): Boolean {
+        <span class="k">val</span> uri = lookup(phrase) ?: <span class="k">return false</span>
+        AudioPlayer.playImmediate(uri)   <span class="c">// &lt;20ms</span>
+        <span class="k">return true</span>
+    }
+
+    <span class="k">private fun</span> normalise(s: String) = s.trim().lowercase().trimEnd('—', '-', '…', '.')
+}</pre>
+
+<pre><span class="k">override fun</span> onAck(filledPause: String) {
+    <span class="c">// 1. cached audio — the fast path, and the one that matters</span>
+    <span class="k">if</span> (phrasePack.play(filledPause)) <span class="k">return</span>
+
+    <span class="c">// 2. not in the pack (new phrase, or pack not refreshed yet):
+    //    a soft earcon still beats silence. Do NOT synthesise — TTS round-trip
+    //    is exactly the delay this whole mechanism exists to hide.</span>
+    AudioPlayer.playEarcon(R.raw.thinking_chime)
+}
+
+<span class="k">override fun</span> onSpeak(text: String, turnId: String) {
+    tts.speak(text, TextToSpeech.QUEUE_ADD, <span class="k">null</span>, turnId)
+}</pre>
+
+<div class="box note">
+  <div class="bt">Building the pack</div>
+  <p>The service rotates through six acknowledgements per language. Pre-synthesise all of them, per
+  property voice, and ship or fetch on provisioning. <code>phrasePackVersion</code> in
+  <code>ready</code> tells you when to refresh &mdash; compare against what you cached and re-fetch
+  on change.</p>
+  <p>Worth caching beyond acknowledgements: <em>"Done."</em>, <em>"Certainly."</em>, <em>"I'm
+  connecting you to the front desk now."</em>, and the numbers 16&ndash;30 for temperatures. Those
+  cover a large share of everything the assistant ever says.</p>
+</div>
+
+<h3>9.3 Two rules</h3>
+<ul>
+  <li><strong>Only fill when you will be slow.</strong> If <code>speak</code> arrives within about
+  250&nbsp;ms of <code>ack</code>, the pause makes a fast interaction feel slower. Consider
+  suppressing playback if <code>speak</code> has already arrived when the audio would start.</li>
+  <li><strong>Never let a filled pause claim an outcome.</strong> <em>"One moment"</em> is honest.
+  <em>"Done!"</em> before the room system has confirmed is a lie the guest catches when the lights
+  don't change.</li>
+</ul>
+
+<h2>10. Barge-in</h2>
+
+<p>Interrupting a talkative assistant is the single most-requested behaviour in voice UX.</p>
+
+<pre><span class="k">class</span> BargeInController(
+    <span class="k">private val</span> player: AudioPlayer,
+    <span class="k">private val</span> client: WoohooClient,
+) {
+    <span class="c">/** Called by VAD while the assistant is speaking. AEC must already be running,
+     *  or the assistant hears itself and barges in on its own voice. */</span>
+    <span class="k">fun</span> onVoiceDetectedDuringPlayback() {
+        player.duck()                    <span class="c">// 1. duck first — avoids false trips</span>
+        mainHandler.postDelayed({
+            <span class="k">if</span> (vad.stillSpeaking()) {
+                player.stop()            <span class="c">// 2. genuine interruption</span>
+                client.sendBargeIn()     <span class="c">// 3. tell the server</span>
+                startListening()         <span class="c">// 4. capture the new utterance</span>
+            } <span class="k">else</span> {
+                player.unduck()          <span class="c">// false alarm</span>
+            }
+        }, 120)
+    }
+}</pre>
+
+<p>Stop playback <strong>locally and immediately</strong>. Do not wait for a server response &mdash;
+the guest is already talking over you.</p>
+
+<h2>11. Endpointing</h2>
+
+<p>Detecting end-of-speech on the device rather than letting the cloud wait out a silence timer is
+worth 200&ndash;400&nbsp;ms per turn, and it is free.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Setting</th><th style="width:16%">Start at</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Trailing silence threshold</td><td>380&nbsp;ms</td><td>The main knob. Lower feels snappier but truncates slow speakers.</td></tr>
+    <tr><td>Max utterance length</td><td>15&nbsp;s</td><td>Hard stop. Prevents a stuck mic streaming forever.</td></tr>
+    <tr><td>Min utterance length</td><td>300&nbsp;ms</td><td>Below this it is almost always a false wake.</td></tr>
+    <tr><td>Accessibility mode</td><td>900&nbsp;ms</td><td>Per-room setting staff can enable at check-in for guests who speak slowly.</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">Tune this on real hardware, in a real room</div>
+  <p>Endpointing is the UX/accuracy trade-off with the most user-visible consequence, and it cannot
+  be tuned at a desk. A room next to a lift shaft behaves differently from a quiet corner room.
+  Make the threshold remotely configurable per property so it can be adjusted without an APK.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>UI &amp; state</h1>
+
+<h2>12. The device state machine</h2>
+
+<pre class="ascii">
+        ┌──────────────────────────────────────────────────────────────┐
+        │                                                              │
+        ▼                                                              │
+    ┌────────┐  wake word   ┌───────────┐  endpoint   ┌──────────┐     │
+    │  IDLE  │─────────────►│ LISTENING │────────────►│ THINKING │     │
+    └────────┘              └───────────┘             └────┬─────┘     │
+        ▲                         │                        │ ack       │
+        │                         │ timeout / silence      ▼           │
+        │                         └──────────────►  ┌────────────┐     │
+        │                                           │  SPEAKING  │─────┘
+        │                                           └─────┬──────┘
+        │                                                 │ awaiting confirmation
+        │                                                 ▼
+        │                                          ┌─────────────┐
+        └──────────────────────────────────────────│ CONFIRMING  │
+                        yes / no / 90s timeout     └─────────────┘
+
+    Cross-cutting, can be entered from anywhere:
+      MUTED     hardware switch — mic dead, LED on
+      OFFLINE   no connection — local grammar only (§17)
+      SERVICE   fatal error, e.g. UNKNOWN_DEVICE
+</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:15%">State</th><th style="width:26%">Entered by</th><th style="width:30%">Screen shows</th><th>Mic</th></tr></thead>
+  <tbody>
+    <tr><td><strong>IDLE</strong></td><td>Default</td><td>Time, room, ambient info</td><td>Wake word only</td></tr>
+    <tr><td><strong>LISTENING</strong></td><td>Wake word fires</td><td>Clear "I'm listening" affordance</td><td>Capturing</td></tr>
+    <tr><td><strong>THINKING</strong></td><td>Endpoint detected</td><td>Activity indicator</td><td>Off</td></tr>
+    <tr><td><strong>SPEAKING</strong></td><td><code>ack</code> or <code>speak</code></td><td><code>screen</code> content if present</td><td>On for barge-in</td></tr>
+    <tr><td><strong>CONFIRMING</strong></td><td>A chargeable action is pending</td><td><strong>The total, prominently</strong></td><td>Listening for yes/no</td></tr>
+    <tr><td><strong>MUTED</strong></td><td>Hardware switch</td><td>Unambiguous mic-off indicator</td><td><strong>Dead in hardware</strong></td></tr>
+    <tr><td><strong>OFFLINE</strong></td><td>No connection</td><td>Offline badge + what still works</td><td>Local grammar</td></tr>
+  </tbody>
+</table>
+
+<h2>13. Screen rendering</h2>
+
+<p>Content is server-driven; presentation is yours. The device renders, it never decides.</p>
+
+<pre><span class="k">override fun</span> onScreen(text: String) {
+    <span class="c">// May contain \n. Never markdown. Render as plain lines.</span>
+    screenState.showMessage(text.split(<span class="s">"\n"</span>))
+}</pre>
+
+<div class="box warn">
+  <div class="bt">Accessibility is not optional here</div>
+  <p>Voice must never be the only path. Guests who are deaf, hard of hearing, non-verbal, or who
+  have atypical speech must be able to reach every function through the screen. This is an
+  obligation under ADA and EN&nbsp;301&nbsp;549, and it is simply correct.</p>
+  <p>Practically: always render <code>speak</code> text on screen as well as playing it; meet
+  contrast requirements; support text scaling; and never make a control reachable by voice alone.
+  In an emergency the screen works when speech does not &mdash; which is exactly when it matters.</p>
+</div>
+
+<h2>14. Confirmations and escalations</h2>
+
+<h3>14.1 Chargeable actions take two turns</h3>
+
+<pre class="term">→ turn  "I'd like a club sandwich and a beer"
+← ack   "One second—"
+← speak "I have 2 items ready to order. That's 1240 INR, charged to your room.
+         Shall I place it?"
+← screen "I have 2 items ready to order. That's 1240 INR, charged to your room."
+
+<span class="c">// nothing has been ordered. nothing has been charged.</span>
+
+→ turn  "yes"
+← speak "Ordered — about 30 minutes. 1240 INR has gone to your room bill."</pre>
+
+<p>Your responsibilities in <code>CONFIRMING</code>:</p>
+<ul>
+  <li><strong>Show the total prominently.</strong> The guest is agreeing to a charge; the screen is
+  the record they can actually read.</li>
+  <li><strong>Never auto-confirm.</strong> Not on timeout, not on ambiguity, not ever.</li>
+  <li>Offer a visible cancel affordance.</li>
+  <li>After ~90&nbsp;s, drop the state. The server expires the frozen action independently, so a
+  late "yes" is safe &mdash; the guest is told it expired and nothing is charged.</li>
+</ul>
+
+<h3>14.2 Escalations</h3>
+
+<pre class="term">→ turn  "I'm having chest pain"
+← speak "I'm alerting the hotel team right now. If this is an emergency please call 112 —
+         I'm not able to call them for you. I'll stay here with you."
+← screen "Emergency: 112
+          Hotel team alerted"</pre>
+
+<div class="box warn">
+  <div class="bt">Do not modify, shorten or paraphrase escalation wording</div>
+  <p>That text is a compliance artefact, not copy. It says plainly what the device <em>cannot</em>
+  do, because a guest who believes help is coming when it isn't is the worst outcome this system
+  can produce.</p>
+  <p>On the device: render the screen text large and persistently &mdash; do not auto-dismiss after
+  a few seconds. Keep the microphone open rather than returning to idle. Never add your own
+  reassurance on top.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part V</span>Production concerns</h1>
+
+<h2>15. Identity, certificates, credentials</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Aspect</th><th style="width:36%">Today</th><th>Production target</th></tr></thead>
+  <tbody>
+    <tr><td>Identity</td><td><code>deviceId</code> string in <code>hello</code></td><td>Per-device X.509 certificate; the ID comes from the certificate subject and the <code>hello</code> field is ignored</td></tr>
+    <tr><td>Key storage</td><td>&mdash;</td><td>Android Keystore / StrongBox, non-exportable</td></tr>
+    <tr><td>Transport</td><td><code>ws://</code></td><td><code>wss://</code>, TLS 1.3, mTLS, pinning <em>with a rotation path</em></td></tr>
+    <tr><td>Cloud credentials in APK</td><td><strong>Present &mdash; remove</strong></td><td>None. Ever.</td></tr>
+    <tr><td>Provisioning</td><td>&mdash;</td><td>QR scan (ZXing, already present) &rarr; generate keypair in hardware &rarr; CSR &rarr; signed cert scoped to one room</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The highest-priority change in this entire migration</div>
+  <p>The current APK ships <code>google-services.json</code> with a service-account path, and AWS
+  Polly keys. A device stolen from a guest room &mdash; which happens &mdash; is therefore a
+  <strong>credential compromise</strong>, and the credential is not limited to that room.</p>
+  <p>Moving STT and TTS server-side removes them as a side effect. That is the real security
+  argument for doing it, and it is the finding that would fail the first serious hotel-chain
+  security review.</p>
+</div>
+
+<pre><span class="c">// Certificate pinning MUST ship with a rotation plan.
+// Pinning without one is how fleets get bricked at 2am.</span>
+<span class="k">val</span> pinner = CertificatePinner.Builder()
+    .add(<span class="s">"gateway.woohoo.example"</span>, <span class="s">"sha256/CURRENT_PIN="</span>)
+    .add(<span class="s">"gateway.woohoo.example"</span>, <span class="s">"sha256/BACKUP_PIN="</span>)  <span class="c">// next cert, pre-published</span>
+    .build()</pre>
+
+<h2>16. Moving STT server-side</h2>
+
+<p>Phase 2, not a blocker. Today you send text and that is fine.</p>
+
+<table class="tight">
+  <thead><tr><th style="width:30%">Aspect</th><th style="width:32%">Device STT (today)</th><th>Cloud STT (target)</th></tr></thead>
+  <tbody>
+    <tr><td>Accented speech</td><td>Whatever the on-device path gives</td><td>Materially better &mdash; hotel guests are the most accent-diverse audience of any voice product</td></tr>
+    <tr><td>Hotel vocabulary</td><td>Cannot be biased per property</td><td>Phrase hints per property: menu items, staff titles, local landmarks</td></tr>
+    <tr><td>Language switching</td><td>APK change</td><td>Config change</td></tr>
+    <tr><td>Improving accuracy</td><td>Fleet-wide OTA</td><td>Deployed in minutes</td></tr>
+    <tr><td>Credentials on device</td><td><strong>Yes &mdash; the problem</strong></td><td>None</td></tr>
+  </tbody>
+</table>
+
+<p>When it lands, the change on your side is: instead of <code>{"type":"turn","transcript":…}</code>
+you stream Opus binary frames between wake and endpoint, and the <code>ack</code>/<code>speak</code>
+flow is unchanged. Target format is <strong>Opus, 16&nbsp;kHz mono, 20&nbsp;ms frames, ~16&nbsp;kbps,
+DTX on</strong>. Nothing else about the client changes.</p>
+
+<h2>17. Offline mode</h2>
+
+<p>Hotel WANs fail, often at night during maintenance. The device must not become a brick with a
+logo.</p>
+
+<pre class="ascii">
+  connected     ──► full capability
+       │
+       │ socket down
+       ▼
+  OFFLINE       ──► announce ONCE, then:
+                    · local grammar (~25 phrases) over the LAN to the property appliance
+                    · lights · temperature · do-not-disturb · curtains · TV
+                    · everything else: honest refusal + point at the room phone
+                    · service requests queued locally, guest TOLD they are queued
+</pre>
+
+<pre><span class="k">override fun</span> onConnectionStateChanged(state: WoohooClient.State) {
+    <span class="k">when</span> (state) {
+        DISCONNECTED -&gt; <span class="k">if</span> (!offlineAnnounced) {
+            <span class="c">// Say what you CAN do, not what is broken. This keeps the guest using
+            // the product; "sorry, I'm having trouble" teaches them to stop trying.</span>
+            tts.speak(<span class="s">"I'm offline right now — I can still do lights, temperature "</span> +
+                      <span class="s">"and do not disturb."</span>)
+            screenState.showOfflineBadge()
+            offlineAnnounced = <span class="k">true</span>
+        }
+        READY -&gt; { offlineAnnounced = <span class="k">false</span>; screenState.clearOfflineBadge() }
+        <span class="k">else</span> -&gt; {}
+    }
+}</pre>
+
+<div class="box note">
+  <div class="bt">One dependency worth flagging early</div>
+  <p>The offline path needs the property appliance to expose a LAN listener for devices. That
+  listener is <strong>not built yet</strong> &mdash; the appliance is currently outbound-only.
+  Until it exists, offline mode can show the badge and refuse honestly, but cannot actuate. Plan
+  the UI for it now; wire the actuation when the listener lands.</p>
+</div>
+
+<h2>18. Telemetry</h2>
+
+<pre>client.sendHealth(rssi = wifiInfo.rssi, wakeFalseAccepts = wakeWord.falseAcceptsSinceLastReport())</pre>
+
+<p>Every few minutes. Two fields carry most of the value: <code>rssi</code> identifies rooms with
+poor coverage — useful to hand back to the hotel as a report — and a rising
+<code>wakeFalseAccepts</code> almost always means the device sits next to a television.</p>
+
+<h1 class="part"><span class="pn">Part VI</span>Shipping</h1>
+
+<h2>19. Testing against a local service</h2>
+
+<pre class="term"><span class="c"># terminal 1</span>
+npm run gateway
+
+<span class="c"># terminal 2 — sanity check without the app</span>
+npm run turn -- "turn on the lights"
+npm run turn -- --device d_511a --trace "it's freezing and fix the shower"</pre>
+
+<table class="tight">
+  <thead><tr><th style="width:42%">Say this</th><th>Expect</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">turn on the lights</td><td>Fast, ~30&nbsp;ms. <code>ack</code> then <code>speak</code></td></tr>
+    <tr><td class="mono">it's freezing in here</td><td>Reads current state, sets 22.5&nbsp;&deg;C</td></tr>
+    <tr><td class="mono">it's too cold and fix the shower</td><td>Two actions, one reply</td></tr>
+    <tr><td class="mono">set the temperature to 35 degrees</td><td>Refused &mdash; test that you don't say "Done"</td></tr>
+    <tr><td class="mono">I'd like a club sandwich</td><td>Confirmation state + <code>screen</code> with the total</td></tr>
+    <tr><td class="mono">yes</td><td>Order placed</td></tr>
+    <tr><td class="mono">I'm having chest pain</td><td>Escalation wording + emergency number on screen</td></tr>
+    <tr><td class="mono">close the curtains</td> on <code>d_412a</code> vs <code>d_511a</code><td>Different outcomes, same words</td></tr>
+  </tbody>
+</table>
+
+<h3>Failure cases to test deliberately</h3>
+<ul>
+  <li>Kill the gateway mid-conversation &rarr; offline badge appears, reconnect is jittered.</li>
+  <li>Restart it &rarr; client recovers without an app restart.</li>
+  <li>Use an unknown <code>deviceId</code> &rarr; <code>UNKNOWN_DEVICE</code>, and you stop retrying.</li>
+  <li>Send 31 turns in an hour &rarr; <code>RATE_LIMITED</code>.</li>
+  <li>Aeroplane mode during <code>THINKING</code> &rarr; no stuck spinner, no false confirmation.</li>
+</ul>
+
+<h2>20. Migration plan</h2>
+
+<table>
+  <thead><tr><th style="width:10%">Stage</th><th style="width:34%">Do</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>Add <code>WoohooClient</code>. Wire <code>onSpeak</code> to existing TTS. Send transcripts from the existing STT path.</td><td>Working end to end alongside V1. Nothing removed yet.</td></tr>
+    <tr><td><strong>2</strong></td><td>Add <code>onAck</code> + phrase pack. Add the state machine and screen rendering.</td><td>Feels fast. This is the step guests notice.</td></tr>
+    <tr><td><strong>3</strong></td><td>Delete the Dialogflow integration and its intent handling.</td><td>Large net code deletion.</td></tr>
+    <tr><td><strong>4</strong></td><td>Add barge-in, device-side endpointing, confirmation and escalation UI.</td><td>Feature-complete client.</td></tr>
+    <tr><td><strong>5</strong></td><td>Certificate provisioning; <strong>remove all cloud credentials</strong>; retire socket.io.</td><td>Security posture fixed. Ship gate.</td></tr>
+    <tr><td><strong>6</strong></td><td>Offline mode + local grammar.</td><td>Survives WAN outages.</td></tr>
+    <tr><td><strong>7</strong></td><td>Move STT server-side; stream Opus.</td><td>Better accuracy, per-property vocabulary.</td></tr>
+  </tbody>
+</table>
+
+<p>Stages 1&ndash;2 are a working demo. Stage 5 is the gate for any real deployment.</p>
+
+<h2>21. Review checklist</h2>
+
+<h3>Connection</h3>
+<div class="chk">
+  <div class="b"></div><div>Exactly one WebSocket, opened at app start, not per turn</div>
+  <div class="b"></div><div><code>hello</code> is always the first frame after open</div>
+  <div class="b"></div><div>Reconnect uses exponential backoff with <strong>full jitter</strong>, capped at 60&nbsp;s</div>
+  <div class="b"></div><div><code>UNKNOWN_DEVICE</code> stops retrying and shows a service state</div>
+  <div class="b"></div><div>Keepalive interval set (20&nbsp;s); read timeout is 0, not a finite value</div>
+</div>
+
+<h3>Audio</h3>
+<div class="chk">
+  <div class="b"></div><div>500&nbsp;ms pre-roll buffer flushed on wake, discarded otherwise</div>
+  <div class="b"></div><div>Ring buffer never touches disk, in any build</div>
+  <div class="b"></div><div><code>ack</code> plays from cached audio, never synthesised</div>
+  <div class="b"></div><div>Barge-in ducks, confirms, then stops &mdash; and stops locally first</div>
+  <div class="b"></div><div>Real <code>asrConfidence</code> is sent, never a constant</div>
+  <div class="b"></div><div>Endpoint threshold is remotely configurable per property</div>
+</div>
+
+<h3>Behaviour</h3>
+<div class="chk">
+  <div class="b"></div><div>The device never says "Done" without a <code>speak</code> from the server</div>
+  <div class="b"></div><div>Confirmation state shows the total and never auto-confirms</div>
+  <div class="b"></div><div>Escalation wording is rendered verbatim and does not auto-dismiss</div>
+  <div class="b"></div><div>Every spoken reply is also on screen</div>
+  <div class="b"></div><div>Offline mode announces once and states what still works</div>
+</div>
+
+<h3>Security &mdash; ship gate</h3>
+<div class="chk">
+  <div class="b"></div><div><strong>No cloud credentials anywhere in the APK</strong></div>
+  <div class="b"></div><div>Device key is generated in hardware and is non-exportable</div>
+  <div class="b"></div><div><code>wss://</code> with pinning <em>and</em> a documented rotation path</div>
+  <div class="b"></div><div>Hardware mic mute cuts the mic in the driver, not in software</div>
+  <div class="b"></div><div>No transcript or audio is written to logs in a release build</div>
+</div>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 Android Integration Guide &middot; Protocol verified against device-gateway 0.1.0<br>
+Full protocol reference: <code>docs/api/</code> &middot; Design rationale: <code>docs/architecture/</code>
+</p>
+</body>
+</html>

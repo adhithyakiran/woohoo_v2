@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — MCP, Data &amp; Automation Integration Guide</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:16mm 14mm 15mm 14mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:9.6pt;line-height:1.56;color:var(--ink);margin:0;}
+p{margin:0 0 7pt;}
+strong{font-weight:650;}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:8.5pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:21pt;font-weight:300;color:var(--navy);margin:0 0 4mm;padding-bottom:3.5mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:8pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2.5mm;}
+h2{font-size:12.8pt;font-weight:600;color:var(--navy);margin:8mm 0 3mm;padding-left:3.5mm;border-left:3.5px solid var(--accent);page-break-after:avoid;}
+h3{font-size:10.6pt;font-weight:650;color:var(--navy2);margin:6mm 0 2mm;page-break-after:avoid;}
+h4{font-size:9.6pt;font-weight:650;margin:4mm 0 1.5mm;page-break-after:avoid;}
+ul,ol{margin:0 0 7pt;padding-left:17px;} li{margin-bottom:3pt;}
+table{width:100%;border-collapse:collapse;margin:3mm 0 6mm;font-size:8.3pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4.5px 6px;font-weight:600;font-size:7.9pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4.5px 6px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+table.tight{font-size:7.8pt;} table.tight td,table.tight th{padding:3.4px 5px;}
+.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.9pt;}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);padding:4mm 5mm;margin:4mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.5pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:2mm;}
+.box p:last-child,.box ul:last-child,.box ol:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.35pt;line-height:1.44;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3.5mm 4mm;margin:3mm 0 5mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.ascii{font-size:6.9pt;line-height:1.3;}
+pre.term{background:#131c27;color:#cfe0ee;border-color:#131c27;font-size:7.5pt;}
+pre .c{color:#7d94a8;} pre .k{color:#8a5cd6;} pre .s{color:#0a7a52;}
+pre.term .c{color:#7d94a8;} pre.term .g{color:#7ddc9a;} pre.term .r{color:#f08a8a;} pre.term .y{color:#e8c87a;}
+.pill{display:inline-block;font-size:6.9pt;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.8mm 2mm;border-radius:2.5px;margin-right:2px;}
+.p-done{background:var(--green-l);color:var(--green);border:1px solid #b9d9c6;}
+.p-gap{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.p-part{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#10262e 0%,#153d47 45%,#1c5c66 100%);color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#7fd4d8;font-weight:600;}
+.cover h1{font-size:34pt;line-height:1.08;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#a4e8ec;}
+.cover .sub{font-size:12.5pt;color:#b0d2d6;margin-top:9mm;font-weight:300;line-height:1.5;max-width:136mm;}
+.cover .rule{width:52mm;height:3px;background:#7fd4d8;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.6pt;color:#9dc0c4;display:grid;grid-template-columns:repeat(3,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:6mm;}
+.cover .meta b{display:block;color:#a4e8ec;font-size:7.4pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:2mm;font-weight:600;}
+.badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 13px;font-size:8pt;color:#d8eef0;margin-right:6px;margin-top:4px;}
+.toc{column-count:2;column-gap:9mm;font-size:8.4pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3.5mm 0 1.2mm;border-bottom:1px solid var(--line);padding-bottom:1mm;break-after:avoid;}
+.toc .ti{color:var(--ink2);margin-bottom:.9mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+.small{font-size:8pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:6mm 0;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>MCP, Data &amp;<b>Automation Integration</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    Connecting the hotel/room/device data, and connecting the room automation
+    systems &mdash; what the agent needs, what it must never see, and how to
+    build an adapter without a hotel.
+  </div>
+  <div>
+    <span class="badge">MCP</span>
+    <span class="badge">Catalogue &amp; schema</span>
+    <span class="badge">INNCOM / Interel</span>
+    <span class="badge">Simulator</span>
+  </div>
+  <div class="meta">
+    <div><b>For</b>Data &amp; integration engineers</div>
+    <div><b>Covers</b>MCP servers · adapters · edge</div>
+    <div><b>Test with</b>Full simulator, no hardware</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">Read first</span>What exists, and what doesn't</h1>
+
+<p>This guide covers two jobs that meet in the middle: <strong>getting hotel data into the
+system</strong>, and <strong>getting commands out to the room</strong>. Before either, three
+honest statements about the current build.</p>
+
+<table>
+  <thead><tr><th style="width:30%">Thing</th><th style="width:16%">Status</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>MCP semantics</strong><br><span class="small">registry, per-room filtering, scope injection, sanitisation, error shaping, audit</span></td>
+      <td><span class="pill p-done">Built</span></td>
+      <td>All of it works and is tested. This is the valuable part.</td>
+    </tr>
+    <tr>
+      <td><strong>MCP protocol</strong><br><span class="small">JSON-RPC, Streamable HTTP, an actual MCP client</span></td>
+      <td><span class="pill p-gap">Not built</span></td>
+      <td>The gateway calls in-process functions. There is no MCP wire protocol anywhere in the codebase. <strong>Your existing MCP servers are not connected.</strong> &sect;3 is the work.</td>
+    </tr>
+    <tr>
+      <td><strong>Automation adapter contract</strong></td>
+      <td><span class="pill p-done">Built</span></td>
+      <td>Interface complete, exercised by a full simulator with failure injection.</td>
+    </tr>
+    <tr>
+      <td><strong>Real vendor adapters</strong><br><span class="small">INNCOM, Interel, BACnet, KNX</span></td>
+      <td><span class="pill p-gap">Not built</span></td>
+      <td>Needs vendor protocol documentation and lab hardware. Part IV is how to write one.</td>
+    </tr>
+    <tr>
+      <td><strong>Database</strong></td>
+      <td><span class="pill p-part">Schema only</span></td>
+      <td>Full Postgres schema with row-level security exists; repositories are in-memory. Swapping is a constructor change &mdash; &sect;7.</td>
+    </tr>
+    <tr>
+      <td><strong>Edge gateway in the actuation path</strong></td>
+      <td><span class="pill p-gap">Not wired</span></td>
+      <td>The appliance exists and is tested, but the cloud currently talks to the adapter directly. &sect;18.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="bt">The one idea that governs everything in this guide</div>
+  <p><strong>The agent reasons about capabilities, never about vendors.</strong> It knows there is
+  "a thermostat in the bedroom zone with a permitted range". It has never heard of INNCOM, Interel,
+  BACnet objects or KNX group addresses.</p>
+  <p>Every vendor-specific fact lives in exactly two places: an <em>adapter</em>, and a per-property
+  <em>capability manifest</em>. If vendor vocabulary ever appears above those, the abstraction is
+  broken and adding the next hotel becomes an engineering project again.</p>
+</div>
+
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Part I &mdash; MCP</div>
+  <div class="ti"><b>1</b> What MCP means here</div>
+  <div class="ti"><b>2</b> The gateway's six jobs</div>
+  <div class="ti"><b>3</b> Connecting your MCP servers</div>
+  <div class="ti"><b>4</b> What must never be an MCP tool</div>
+
+  <div class="tp">Part II &mdash; Data</div>
+  <div class="ti"><b>5</b> The domain model</div>
+  <div class="ti"><b>6</b> What the agent needs per turn</div>
+  <div class="ti"><b>7</b> Schema and repositories</div>
+  <div class="ti"><b>8</b> Tenant isolation</div>
+  <div class="ti"><b>9</b> Caching and freshness</div>
+
+  <div class="tp">Part III &mdash; Capabilities</div>
+  <div class="ti"><b>10</b> The capability model</div>
+  <div class="ti"><b>11</b> Writing a manifest</div>
+  <div class="ti"><b>12</b> Property configuration</div>
+
+  <div class="tp">Part IV &mdash; Automation adapters</div>
+  <div class="ti"><b>13</b> The contract</div>
+  <div class="ti"><b>14</b> Writing an adapter</div>
+  <div class="ti"><b>15</b> Capability degradation</div>
+  <div class="ti"><b>16</b> Failure, retries, circuit breakers</div>
+  <div class="ti"><b>17</b> Verify-read</div>
+
+  <div class="tp">Part V &mdash; On premises</div>
+  <div class="ti"><b>18</b> Why the edge gateway exists</div>
+  <div class="ti"><b>19</b> What runs on it</div>
+
+  <div class="tp">Part VI &mdash; Practical</div>
+  <div class="ti"><b>20</b> The simulator</div>
+  <div class="ti"><b>21</b> Conformance testing</div>
+  <div class="ti"><b>22</b> Onboarding a property</div>
+  <div class="ti"><b>23</b> Checklist</div>
+</div>
+
+<h1 class="part"><span class="pn">Part I</span>MCP</h1>
+
+<h2>1. What MCP means here</h2>
+
+<p>MCP is a protocol for exposing capabilities <strong>to a model</strong>. In Woohoo it is an
+<em>internal</em> plane: the agent proposes tool calls, and a gateway executes them. It is not a
+public API, and no external system calls it.</p>
+
+<pre class="ascii">
+   AGENT ───► MCP GATEWAY ───┬──► property catalogue      (rooms, devices, manifests)
+   proposes    the control   ├──► device state    ───► automation adapter ───► the room
+   only        point         ├──► service requests
+                             ├──► F&B orders
+                             ├──► PMS bridge
+                             ├──► knowledge / FAQ
+                             ├──► guest preferences
+                             └──► notification / escalation
+
+   The agent can NEVER address any of these directly. That single rule is what makes
+   tenant scoping mechanical instead of a code-review question.
+</pre>
+
+<div class="box warn">
+  <div class="bt">The gap you need to know about before planning</div>
+  <p>The gateway currently dispatches through an in-process map of handler functions:</p>
+  <pre style="margin:2mm 0 0">const result = await gateway.execute(scoped, ctx);   <span class="c">// a function call</span></pre>
+  <p style="margin-top:2mm">There is <strong>no MCP client, no JSON-RPC, no Streamable HTTP</strong>
+  in the codebase. So the MCP servers you already have &mdash; hotel, room, device, services &mdash;
+  are <strong>not connected to this system</strong>. The gateway was designed to front them, but
+  today it fronts local functions. &sect;3 is that work.</p>
+</div>
+
+<h2>2. The gateway's six jobs</h2>
+
+<p>Understanding these explains why the agent is not simply pointed at your MCP servers directly
+&mdash; which is what MCP is for, and would be right for a single-tenant developer tool.</p>
+
+<table>
+  <thead><tr><th style="width:24%">Job</th><th style="width:38%">What happens without it</th><th>What the gateway does</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Scope injection</strong></td><td>The room to act on comes from <em>model output</em>. A model error or an injected instruction can address another guest's room. Nothing structural prevents it.</td><td>Strips any room/property/tenant field the model produced and injects the real one, derived from the authenticated device.</td></tr>
+    <tr><td><strong>Per-room filtering</strong></td><td>Every hotel sees every tool. A room without curtains gets a curtain tool the model will happily call.</td><td>Filters the advertised tool set by that room's capability manifest before the agent sees it.</td></tr>
+    <tr><td><strong>Result sanitisation</strong></td><td>A menu description edited by a hotel employee becomes a prompt-injection vector.</td><td>Fences untrusted content and scans it before it enters the model's context.</td></tr>
+    <tr><td><strong>Error normalisation</strong></td><td><code>INNCOM: ERR_0x8004</code> reaches the model, which either hallucinates an explanation or apologises uselessly.</td><td>Maps everything into one small vocabulary the model is taught to handle.</td></tr>
+    <tr><td><strong>Caching</strong></td><td>The catalogue is read on every turn and changes weekly &mdash; the hottest and most wasteful query in the system.</td><td>Per-tool TTLs with explicit invalidation.</td></tr>
+    <tr><td><strong>Uniform audit</strong></td><td>Each server logs differently, or not at all.</td><td>One place records every call, its arguments digest, its verdict, latency and outcome.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.1 Scope injection, concretely</h3>
+
+<pre>{ <span class="c">// what the model emitted — note the room_id it invented</span>
+  <span class="s">"tool"</span>: <span class="s">"climate.set_temperature"</span>,
+  <span class="s">"args"</span>: { <span class="s">"zone"</span>: <span class="s">"bedroom"</span>, <span class="s">"targetC"</span>: 23.0, <span class="s">"room_id"</span>: <span class="s">"999"</span> }
+}
+
+{ <span class="c">// what actually executed</span>
+  <span class="s">"tool"</span>: <span class="s">"climate.set_temperature"</span>,
+  <span class="s">"args"</span>: { <span class="s">"zone"</span>: <span class="s">"bedroom"</span>, <span class="s">"targetC"</span>: 23.0 },        <span class="c">// room_id STRIPPED</span>
+  <span class="s">"scope"</span>: {                                          <span class="c">// injected server-side</span>
+    <span class="s">"tenantId"</span>:   <span class="s">"t_demo_apac"</span>,
+    <span class="s">"propertyId"</span>: <span class="s">"p_blr_whitefield"</span>,
+    <span class="s">"roomId"</span>:     <span class="s">"r_412"</span>,
+    <span class="s">"deviceId"</span>:   <span class="s">"d_412a"</span>
+  },
+  <span class="s">"idempotencyKey"</span>: <span class="s">"sha256(turnId | tool | canonical args)"</span>
+}</pre>
+
+<div class="box note">
+  <div class="bt">Stripped, not validated &mdash; and the difference matters</div>
+  <p>Validating a model-supplied <code>room_id</code> against the real one would mean the field
+  exists in the surface. Which means it can be populated. Which means somebody will eventually
+  "temporarily" trust it for a staff feature. Removing the field removes the class of bug.</p>
+  <p><strong>Design your MCP tools the same way: no tool takes a room, property or tenant
+  identifier.</strong> Scope arrives out of band.</p>
+</div>
+
+<h2>3. Connecting your MCP servers</h2>
+
+<p>This is the integration work. Everything above the transport already exists &mdash; you are
+implementing one interface.</p>
+
+<pre><span class="c">// services/woohoo-core/src/modules/mcp-gateway.ts</span>
+<span class="k">export type</span> ToolHandler = (
+  call: ScopedToolCall,   <span class="c">// tool, args, scope, turnId, idempotencyKey</span>
+  ctx:  TurnContext,
+) =&gt; Promise&lt;<span class="k">unknown</span>&gt;;</pre>
+
+<p>Today a handler is a local function. To use a real MCP server, it becomes a client call:</p>
+
+<pre><span class="c">/**
+ * Bridges one Woohoo tool to a tool on a real MCP server.
+ *
+ * Everything above this — filtering, policy, audit — is unchanged. The gateway does not
+ * care whether a handler is local or remote.
+ */</span>
+<span class="k">function</span> mcpHandler(client: McpClient, remoteToolName: <span class="k">string</span>): ToolHandler {
+  <span class="k">return async</span> (call, ctx) =&gt; {
+    <span class="k">const</span> res = <span class="k">await</span> client.callTool({
+      name: remoteToolName,
+      arguments: {
+        ...call.args,
+        <span class="c">// Scope travels OUT OF BAND, not as tool arguments (see §2.1).</span>
+      },
+      <span class="c">// Per-call, audience-bound, short-lived. A compromised server must not be able
+      // to replay this token against a different server.</span>
+      _meta: { woohooScope: call.scope, turnId: call.turnId },
+    }, { timeoutMs: 2500 });
+
+    <span class="k">if</span> (res.isError) {
+      <span class="c">// Normalise. Raw upstream errors must never reach the model.</span>
+      <span class="k">return</span> toolError(
+        ToolErrorCode.TemporarilyUnreachable,
+        <span class="s">'That system is not responding right now.'</span>,
+        <span class="s">'Tell the guest you could not complete it and offer the front desk.'</span>,
+        <span class="k">true</span>,
+      );
+    }
+    <span class="k">return</span> res.content;
+  };
+}</pre>
+
+<h3>3.1 What the MCP server must guarantee</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Requirement</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Honour the scope, don't trust arguments</strong></td><td>The server must resolve which room from the out-of-band scope, and reject or ignore any room identifier in the arguments. This is the single most important requirement.</td></tr>
+    <tr><td><strong>No cross-tenant reachability</strong></td><td>Given scope for property A, it must be impossible to read or write property B &mdash; even with a crafted argument.</td></tr>
+    <tr><td><strong>Bounded latency</strong></td><td>Return within ~2.5&nbsp;s or fail. The turn has an 8-second wall clock and a guest is standing there.</td></tr>
+    <tr><td><strong>Idempotency</strong></td><td>Honour <code>idempotencyKey</code> on mutations. Retries happen; double actuation must not.</td></tr>
+    <tr><td><strong>Structured errors</strong></td><td>Distinguish "not available in this room" from "upstream is down" &mdash; they produce different things for the guest to hear.</td></tr>
+    <tr><td><strong>No side effects on read</strong></td><td>Read tools are pre-fetched speculatively on most turns, before anyone knows whether they are needed.</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 Transport</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Option</th><th style="width:16%">Use when</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>In-process</strong></td><td>Today</td><td>Zero latency. Same interface, so promotion later is a config change.</td></tr>
+    <tr><td><strong>Streamable HTTP</strong></td><td>Separately deployed servers</td><td>Recommended. Single stable endpoint, streaming results, works in-VPC over mTLS.</td></tr>
+    <tr><td>stdio</td><td>Local dev only</td><td>Avoid in production &mdash; couples process lifecycles and makes scaling and observability awkward.</td></tr>
+    <tr><td>Third-party servers</td><td><strong>Not yet</strong></td><td>A customer-supplied MCP server is a security decision, not an integration one. It needs sandboxing, separate egress policy, maximally untrusted results, and no access to anything that costs money or moves hardware.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. What must never be an MCP tool</h2>
+
+<div class="box warn">
+  <div class="bt">Automation adapters are not MCP servers, and this is a tempting mistake</div>
+  <p>The symmetry is appealing: if the catalogue is an MCP server, why not <code>inncom-adapter</code>?</p>
+  <p>Because MCP exposes capabilities <strong>to a model</strong>. If the INNCOM adapter were an MCP
+  server, its vendor-shaped tools would appear in the model's world, and within two sprints the
+  agent would be reasoning about object IDs and register writes. The abstraction that makes a new
+  hotel a config change would be dead.</p>
+  <p>Adapters sit <em>behind</em> the device-state server, which presents one vendor-neutral surface.
+  Adding Schneider or Lutron means writing an adapter and a mapping &mdash; the model's tool list,
+  the prompts and the tests all stay untouched.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:34%">Never expose as a tool</th><th>Instead</th></tr></thead>
+  <tbody>
+    <tr><td>Anything vendor-shaped &mdash; object IDs, registers, group addresses</td><td>A capability behind an adapter</td></tr>
+    <tr><td>Anything taking a room, property or tenant parameter</td><td>Ambient scope</td></tr>
+    <tr><td>Anything operating on more than one room</td><td>Staff plane, human-authenticated, with a cap on rooms per operation</td></tr>
+    <tr><td>Door locks, safes, microphone activation</td><td>Nothing. No tool exists at any tier, deliberately.</td></tr>
+    <tr><td>Raw SQL or arbitrary query execution</td><td>Purpose-shaped read tools</td></tr>
+    <tr><td>Anything handling a card number</td><td>Folio posting via the PMS only</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part II</span>Data</h1>
+
+<h2>5. The domain model</h2>
+
+<pre class="ascii">
+  TENANT (chain) ──1:*──► PROPERTY (hotel) ──1:*──► ROOM ──*:1──► ROOM_TYPE
+                              │                      │               │
+                              │                      │               └─► CAPABILITY_MANIFEST
+                              │                      │                   (versioned)
+                              │                      │
+                              │                      ├─► ROOM_OVERRIDE  (may only REMOVE)
+                              │                      │
+                              │                      └─► vendor_room_id  ← NOT the room number
+                              │
+                              ├──► EDGE_GATEWAY (1–2 per property)
+                              └──► PROPERTY_POLICY (temp bands, quiet hours, spend caps)
+
+  WOOHOO_HUB (the voice device) ──bound to──► ROOM
+      · separate entity, revocable, timestamped, re-verifiable
+</pre>
+
+<div class="box info">
+  <div class="bt">Two modelling decisions worth understanding before you touch the schema</div>
+  <p><strong>The device is not the room.</strong> Modelling the hub as a separate entity with an
+  explicit, timestamped binding is what makes mis-binding detectable. Collapse them &mdash; treat
+  device ID as room ID &mdash; and a device moved during a refurbishment silently controls the wrong
+  room while the audit log records it as correct. That bug surfaces nowhere unless you build for it.</p>
+  <p><strong>The manifest attaches to room type, not room.</strong> A 300-room property has perhaps
+  eight types. Eight manifests plus a handful of overrides is a day's work; three hundred is a
+  project. This single choice is most of the difference between five-day and five-week onboarding.</p>
+</div>
+
+<h2>6. What the agent needs per turn</h2>
+
+<p>Five reads, all fired <strong>in parallel while the guest is still speaking</strong>. Together
+they remove an entire tool round-trip &mdash; roughly 400&ndash;600&nbsp;ms &mdash; from most turns,
+so their latency is on the critical path.</p>
+
+<table>
+  <thead><tr><th style="width:24%">Read</th><th style="width:14%">Budget</th><th style="width:12%">Cache</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Device resolution</strong></td><td>&lt;5&nbsp;ms</td><td>60&nbsp;s</td><td><code>deviceId</code> &rarr; tenant, property, room, manifest, vendor room ref. <strong>Must not cost a DB hit per turn.</strong></td></tr>
+    <tr><td><strong>Room state</strong></td><td>&lt;1.2&nbsp;s</td><td>10&nbsp;s fresh</td><td>Lighting, climate, curtains, DND per zone, plus a freshness marker</td></tr>
+    <tr><td><strong>Open requests</strong></td><td>&lt;300&nbsp;ms</td><td>&mdash;</td><td>So the agent doesn't raise a duplicate</td></tr>
+    <tr><td><strong>Stay context</strong></td><td>&lt;1.5&nbsp;s</td><td>15&nbsp;min</td><td>Checkout time, room type, wifi, folio total &mdash; <strong>tokenised, no guest name</strong> unless consented</td></tr>
+    <tr><td><strong>Preferences</strong></td><td>&lt;300&nbsp;ms</td><td>&mdash;</td><td>Empty unless the guest opted in</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">Design your reads to be cheap and batched</div>
+  <p>One <code>room.get_state</code> returning everything beats five per-device reads. Every
+  mutating tool should also return the resulting state, which removes a read-back round trip and
+  lets the agent confirm truthfully rather than optimistically.</p>
+</div>
+
+<h2>7. Schema and repositories</h2>
+
+<p>The full schema is in <code>db/migrations/001_init.sql</code>. Core tables:</p>
+
+<pre><span class="c">-- catalogue</span>
+tenant            tenant_id · name · cell · kms_key_arn
+property          property_id · tenant_id · timezone · default_language · config (JSONB)
+room_type         (property_id, room_type_id) · manifest (JSONB) · manifest_version
+room              room_id · property_id · room_number · room_type_id
+                  · vendor_room_id            <span class="c">← the automation system's own reference</span>
+                  · disabled_capabilities[]   <span class="c">← per-room overrides</span>
+device            device_id · tenant_id · property_id · room_id
+                  · certificate_serial · bound_at · binding_verified_at · revoked
+
+<span class="c">-- operations</span>
+service_request   category · description · priority · status · deferred · dispatch_at · sla_due_at
+fnb_menu_item     (property_id, menu_item_id) · name · keywords[] · price · available
+fnb_order         items (JSONB) · total · status · folio_ref
+
+<span class="c">-- guest data — SEPARATE SCHEMA, per-tenant key</span>
+guest_data.stay        stay_ref (tokenised) · checkout_at · wifi · folio
+guest_data.consent     voice · preferences · personalisation
+guest_data.preference  (room_id, key) · value
+
+<span class="c">-- audit — append-only, WORM in production</span>
+turn_record       transcript_redacted · tool_calls (JSONB) · outcome · sealed_at
+escalation        category · severity · notified[] · acknowledged_at</pre>
+
+<h3>7.1 Repository interfaces</h3>
+
+<p>Every store sits behind an interface with an in-memory implementation, which is why the whole
+system runs with no database. Adding Postgres is implementing the same interface.</p>
+
+<pre><span class="k">export interface</span> CatalogRepository {
+  getProperty(propertyId: <span class="k">string</span>): Promise&lt;PropertyConfig | <span class="k">undefined</span>&gt;;
+  getRoom(roomId: <span class="k">string</span>): Promise&lt;RoomRecord | <span class="k">undefined</span>&gt;;
+  getDevice(deviceId: <span class="k">string</span>): Promise&lt;DeviceRecord | <span class="k">undefined</span>&gt;;
+  listRooms(propertyId: <span class="k">string</span>): Promise&lt;RoomRecord[]&gt;;
+  upsertProperty(cfg: PropertyConfig): Promise&lt;<span class="k">void</span>&gt;;
+  upsertRoom(room: RoomRecord): Promise&lt;<span class="k">void</span>&gt;;
+  upsertDevice(device: DeviceRecord): Promise&lt;<span class="k">void</span>&gt;;
+}</pre>
+
+<div class="box warn">
+  <div class="bt">One thing to fix while you are in there</div>
+  <p>All state is currently held in in-process <code>Map</code>s &mdash; sessions, device shadow,
+  pending confirmations, catalogue cache. That means <strong>the service runs as exactly one
+  instance</strong>: two replicas would each hold different conversation history, and a payment
+  confirmation minted on one could not be redeemed on the other.</p>
+  <p>Moving these to Postgres and Redis behind the existing interfaces is what unlocks horizontal
+  scaling. It is a prerequisite for production, not an optimisation.</p>
+</div>
+
+<h2>8. Tenant isolation</h2>
+
+<p>Row-level security is enabled on every tenant-scoped table. It is a <strong>backstop</strong>,
+not the primary control &mdash; the primary control is that every query goes through a repository
+carrying the tenant. RLS is what saves you the day someone forgets.</p>
+
+<pre><span class="c">-- app.tenant_id is set per connection by the repository layer</span>
+CREATE POLICY tenant_isolation ON service_request
+  USING (tenant_id = current_setting('app.tenant_id', true));</pre>
+
+<div class="box note">
+  <div class="bt">The test to write</div>
+  <p>For every store: <em>"if a query here forgot its tenant filter, what would happen?"</em> If the
+  answer is "it returns another hotel's data", you need the backstop. Build a CI test that runs
+  representative queries under a tenant-scoped role and asserts zero cross-tenant rows &mdash; this
+  is the first control a hotel chain's penetration test will probe.</p>
+</div>
+
+<h2>9. Caching and freshness</h2>
+
+<p>Device state is the interesting one. The automation system is the source of truth, but reading it
+every turn is too slow and too fragile.</p>
+
+<pre class="ascii">
+   TRUTH                SHADOW                  CACHE              AGENT
+   ─────────            ──────────              ──────────         ──────────
+   head-end  ──push──►  edge local  ──stream──► cloud state ──►    room.get_state
+             ◄─write──  shadow      ◄─command── service
+
+   fresh   (<10s)     → serve from shadow, no read
+   stale   (10–120s)  → serve from shadow, but verify-read after any write
+   expired (>120s)    → force a synchronous read; if that fails return UNKNOWN
+                        and the agent says "I'm not sure what it's set to right now"
+                        rather than confidently reporting a stale number
+</pre>
+
+<p>Surface the freshness marker in any read tool you build. An honest "unknown" is far better than
+a confident stale value &mdash; the guest can hear the difference when the room doesn't match.</p>
+
+<h1 class="part"><span class="pn">Part III</span>Capabilities</h1>
+
+<h2>10. The capability model</h2>
+
+<p>This is the abstraction that makes "a new hotel is configuration" true. Three levels:</p>
+
+<table>
+  <thead><tr><th style="width:22%">Level</th><th style="width:34%">What it is</th><th>Who sees it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Capability</strong></td><td>An abstract, vendor-neutral ability with a typed contract &mdash; <code>climate.setpoint</code> with a range, <code>curtains.position</code> 0&ndash;100</td><td>Defined once, globally, versioned</td></tr>
+    <tr><td><strong>Capability manifest</strong></td><td>Per room type: which capabilities exist, which zones, what bounds</td><td>Authored at onboarding. Generates the model's tool list</td></tr>
+    <tr><td><strong>Driver mapping</strong></td><td>Per vendor: capability operation &rarr; concrete protocol operation</td><td><strong>Only the adapter.</strong> Never the model, the prompt, the tests or the fast path</td></tr>
+  </tbody>
+</table>
+
+<h3>10.1 The same request, three rooms</h3>
+
+<pre class="ascii">
+ GUEST SAYS         AGENT SEES                  MANIFEST SAYS              ADAPTER DOES
+ ───────────        ──────────────────────      ──────────────────────     ─────────────────────
+ "close the         curtains.set({              room 511 has              inncom-adapter:
+  curtains"          zone:"bedroom",             curtains.position         → object 0x2A
+                     position: 0 })              driver: inncom            → SET_LEVEL 0
+                                                                           → poll until confirmed
+                                                                           → { position: 0 }
+
+ same words,        IDENTICAL tool call         room 88 has                interel-adapter:
+ different hotel                                 curtains.open_close       → PUT /rooms/88/blinds
+                                                 (binary, no position)      { state: "closed" }
+                                                 driver: interel           → { position: 0 }
+
+ same words,        TOOL NOT PRESENT            room 412 has no            (nothing — the model
+ no motorised        in the tool surface         curtain capability         could not have
+ curtains            at all                                                 proposed it)
+</pre>
+
+<div class="box good">
+  <div class="bt">Why absence beats refusal</div>
+  <p>A capability the room lacks produces <strong>no tool</strong>. The model cannot propose it, so
+  no runtime check is needed and no apology is generated for something that was never possible.</p>
+  <p>Verified in the running build: a Deluxe room sees <strong>18 tools</strong>, a Suite sees
+  <strong>21</strong>, and a Suite with a disabled curtain motor sees <strong>20</strong>. Same
+  code, same prompts, different config.</p>
+</div>
+
+<h2>11. Writing a manifest</h2>
+
+<pre>{
+  <span class="s">"id"</span>: <span class="s">"rt_suite"</span>,
+  <span class="s">"count"</span>: 20,
+  <span class="s">"capabilityManifest"</span>: {
+    <span class="s">"version"</span>: <span class="s">"3"</span>,
+    <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>, <span class="s">"living"</span>, <span class="s">"bathroom"</span>],
+    <span class="s">"capabilities"</span>: [
+      { <span class="s">"capability"</span>: <span class="s">"lighting.on_off"</span>,     <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>,<span class="s">"bathroom"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"lighting.brightness"</span>, <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"lighting.scene"</span>,     <span class="s">"zones"</span>: [<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"climate.setpoint"</span>,   <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>],
+        <span class="s">"minC"</span>: 18, <span class="s">"maxC"</span>: 26 },
+      { <span class="s">"capability"</span>: <span class="s">"climate.mode"</span>,       <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"curtains.position"</span>,  <span class="s">"zones"</span>: [<span class="s">"bedroom"</span>,<span class="s">"living"</span>] },
+      { <span class="s">"capability"</span>: <span class="s">"dnd"</span> },
+      { <span class="s">"capability"</span>: <span class="s">"tv.power_volume_input"</span> },
+      { <span class="s">"capability"</span>: <span class="s">"media.playback"</span> }
+    ],
+    <span class="s">"scenes"</span>: [<span class="s">"sleep"</span>, <span class="s">"welcome"</span>, <span class="s">"work"</span>, <span class="s">"movie"</span>]
+  }
+}</pre>
+
+<h3>11.1 The capability vocabulary</h3>
+<table class="tight">
+  <thead><tr><th style="width:28%">Capability</th><th style="width:20%">Value</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">lighting.on_off</td><td>boolean</td><td>Per zone</td></tr>
+    <tr><td class="mono">lighting.brightness</td><td>0&ndash;100</td><td>Implies on_off</td></tr>
+    <tr><td class="mono">lighting.scene</td><td>scene name</td><td>Names come from <code>scenes</code></td></tr>
+    <tr><td class="mono">climate.setpoint</td><td>&deg;C</td><td><code>minC</code>/<code>maxC</code> enforced by policy, not schema</td></tr>
+    <tr><td class="mono">climate.mode</td><td>auto|cool|heat|fan|off</td><td>&mdash;</td></tr>
+    <tr><td class="mono">curtains.position</td><td>0&ndash;100</td><td>Continuous</td></tr>
+    <tr><td class="mono">curtains.open_close</td><td>boolean</td><td>Binary. Same tool; the adapter degrades (&sect;15)</td></tr>
+    <tr><td class="mono">dnd</td><td>off|dnd|make_up_room</td><td>Room-level, no zone</td></tr>
+    <tr><td class="mono">tv.power_volume_input</td><td>mixed</td><td>&mdash;</td></tr>
+    <tr><td class="mono">media.playback</td><td>play|pause|next|previous</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 Per-room overrides</h3>
+<pre>"roomOverrides": [
+  { "roomRef": "r_512", "disable": ["curtains.position"],
+    "reason": "motor awaiting replacement" }
+]</pre>
+
+<div class="box warn">
+  <div class="bt">Overrides may only REMOVE, never add</div>
+  <p>Enforced in code. If an override could grant a capability, a config edit would widen what the
+  agent can do without a manifest version bump &mdash; and capability changes need to be
+  reviewable. To add something, change the room type or move the room to a different one.</p>
+</div>
+
+<h2>12. Property configuration</h2>
+
+<p>One document per hotel. This is the artefact onboarding produces, and it is what makes a new
+property a configuration exercise.</p>
+
+<pre>{
+  <span class="s">"propertyId"</span>: <span class="s">"p_blr_whitefield"</span>,  <span class="s">"tenantId"</span>: <span class="s">"t_demo_apac"</span>,
+  <span class="s">"timezone"</span>: <span class="s">"Asia/Kolkata"</span>,       <span class="s">"languages"</span>: [<span class="s">"en-IN"</span>,<span class="s">"hi-IN"</span>],
+
+  <span class="s">"automation"</span>: {
+    <span class="s">"vendor"</span>: <span class="s">"inncom"</span>,
+    <span class="s">"roomRefMapping"</span>: <span class="s">"vendor_room_id"</span>   <span class="c">// NOT the hotel room number</span>
+  },
+
+  <span class="s">"policy"</span>: {
+    <span class="s">"climate"</span>: { <span class="s">"minC"</span>: 18, <span class="s">"maxC"</span>: 26, <span class="s">"maxChangesPerHour"</span>: 6 },
+    <span class="s">"quietHours"</span>: { <span class="s">"start"</span>: <span class="s">"22:00"</span>, <span class="s">"end"</span>: <span class="s">"07:00"</span>,
+                     <span class="s">"deferNonUrgentDispatch"</span>: <span class="k">true</span> },
+    <span class="s">"spend"</span>: { <span class="s">"perStayCap"</span>:  { <span class="s">"amount"</span>: 15000, <span class="s">"currency"</span>: <span class="s">"INR"</span> },
+                <span class="s">"perOrderCap"</span>: { <span class="s">"amount"</span>:  6000, <span class="s">"currency"</span>: <span class="s">"INR"</span> } },
+    <span class="s">"tierCeiling"</span>: <span class="s">"T3"</span>,       <span class="c">// kill switch: "T0" = read-only mode</span>
+    <span class="s">"disabledTools"</span>: []         <span class="c">// per-tool kill switch</span>
+  },
+
+  <span class="s">"escalation"</span>: { <span class="s">"emergencyNumberDisplay"</span>: <span class="s">"112"</span> },
+  <span class="s">"roomTypes"</span>: [ ... ],
+  <span class="s">"roomOverrides"</span>: [ ... ]
+}</pre>
+
+<div class="box info">
+  <div class="bt">The vendor room reference trap</div>
+  <p><code>vendorRoomId</code> (e.g. <code>INN-0412</code>) is the automation system's own
+  identifier. Assuming it equals the hotel room number is a classic onboarding bug whose symptom is
+  <strong>actions landing in the wrong room</strong> &mdash; and it can look correct in testing if
+  the test rooms happen to line up. Verify the mapping explicitly during onboarding, room by room.</p>
+</div>
+
+<h1 class="part"><span class="pn">Part IV</span>Automation adapters</h1>
+
+<h2>13. The contract</h2>
+
+<pre><span class="k">export interface</span> AutomationAdapter {
+  <span class="k">readonly</span> vendor: <span class="k">string</span>;
+
+  connect(binding: PropertyBinding): Promise&lt;ConnectionHandle&gt;;
+  health(): Promise&lt;{ reachable: <span class="k">boolean</span>; latencyMs: <span class="k">number</span>; lastError?: <span class="k">string</span> }&gt;;
+
+  readRoomState(room: VendorRoomRef): Promise&lt;CapabilityState[]&gt;;
+  subscribe(room: VendorRoomRef, cb: (change: StateChange) =&gt; <span class="k">void</span>): Unsubscribe;
+
+  <span class="c">/** Capability in, capability out. Vendor vocabulary never escapes this file. */</span>
+  applyCapability(
+    room: VendorRoomRef,
+    op: CapabilityOperation,     <span class="c">// { capability, zone?, value }</span>
+    idempotencyKey: <span class="k">string</span>,
+  ): Promise&lt;CapabilityResult&gt;;  <span class="c">// { status, observed?, message? }</span>
+
+  <span class="c">/** Run at onboarding and nightly against a designated test room. */</span>
+  conformanceSuite(): ConformanceTest[];
+}</pre>
+
+<p>Six methods. Everything else in the platform is built on them.</p>
+
+<h2>14. Writing an adapter</h2>
+
+<pre><span class="k">export class</span> InncomAdapter <span class="k">implements</span> AutomationAdapter {
+  <span class="k">readonly</span> vendor = <span class="s">'inncom'</span>;
+
+  <span class="k">private</span> objectMap!: ObjectMap;   <span class="c">// per-installation, from config — NOT hardcoded</span>
+  <span class="k">private</span> conn!: HeadEndConnection;
+
+  <span class="k">async</span> connect(binding: PropertyBinding) {
+    <span class="c">// Credentials come from the secret store, scoped to ONE property.
+    // Never a shared credential across properties — that turns one hotel's
+    // incident into everyone's.</span>
+    <span class="k">const</span> creds = <span class="k">await</span> secrets.get(binding.secretRef!);
+    <span class="k">this</span>.objectMap = <span class="k">await</span> loadObjectMap(binding.propertyId);
+    <span class="k">this</span>.conn = <span class="k">await</span> HeadEnd.open(creds);
+    <span class="k">return</span> { propertyId: binding.propertyId, connectedAt: Date.now(),
+             close: () =&gt; <span class="k">this</span>.conn.close() };
+  }
+
+  <span class="k">async</span> applyCapability(room, op, idempotencyKey) {
+    <span class="c">// 1. Idempotency — replays must not actuate twice.</span>
+    <span class="k">const</span> prior = <span class="k">this</span>.seen.get(idempotencyKey);
+    <span class="k">if</span> (prior) <span class="k">return</span> prior;
+
+    <span class="c">// 2. Translate capability → vendor. THE ONLY PLACE THIS HAPPENS.</span>
+    <span class="k">const</span> target = <span class="k">this</span>.objectMap.resolve(room.vendorRoomId, op.capability, op.zone);
+    <span class="k">if</span> (!target) {
+      <span class="k">return</span> { status: <span class="s">'rejected'</span>,
+               message: <span class="s">`No ${op.capability} in room ${room.vendorRoomId}`</span> };
+    }
+
+    <span class="c">// 3. Actuate.</span>
+    <span class="k">await this</span>.conn.setLevel(target.objectId, encodeValue(op, target));
+
+    <span class="c">// 4. Read back. "Applied" must mean OBSERVED applied (§17).</span>
+    <span class="k">const</span> observed = <span class="k">await this</span>.readCapability(room, op.capability, op.zone);
+    <span class="k">const</span> result: CapabilityResult = observed
+      ? { status: <span class="s">'applied'</span>, observed }
+      : { status: <span class="s">'pending'</span> };
+
+    <span class="k">this</span>.seen.set(idempotencyKey, result);
+    <span class="k">return</span> result;
+  }
+}</pre>
+
+<h3>14.1 Vendors to design around</h3>
+<table class="tight">
+  <thead><tr><th style="width:16%">Vendor</th><th style="width:24%">Typical surface</th><th>What shapes the adapter</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Honeywell INNCOM</strong></td><td>On-prem gateway, proprietary LAN protocol; sometimes a BACnet or REST bridge</td><td>LAN-only. Object/register addressing. Older installs dislike polling and have low concurrency. Firmware varies by install year &mdash; keep the object map in config, never in code.</td></tr>
+    <tr><td><strong>Interel</strong></td><td>On-prem controller, IP/REST or proprietary</td><td>More modern, still LAN-resident. Addresses rooms by <em>its own</em> reference.</td></tr>
+    <tr><td><strong>BACnet/IP</strong></td><td>Standard objects</td><td>Standardised but vendor-specific naming. <strong>Respect write priority arrays</strong> or you will fight the building's own control logic.</td></tr>
+    <tr><td><strong>KNX</strong></td><td>KNXnet/IP gateway</td><td>Group addresses carry no semantics without the ETS project file. Import it at onboarding to generate the mapping &mdash; manual mapping does not scale.</td></tr>
+    <tr><td><strong>Lutron / Crestron</strong></td><td>Processor with an IP protocol</td><td>Excellent lighting, but integration ports are licence-gated. <strong>Confirm licensing during pre-sales</strong> &mdash; it is a commercial blocker discovered late otherwise.</td></tr>
+  </tbody>
+</table>
+
+<h2>15. Capability degradation</h2>
+
+<p>Rooms differ in what their hardware can do. <strong>The adapter absorbs that, not the model.</strong></p>
+
+<pre><span class="k">case</span> CapabilityId.CurtainsPosition: {
+  <span class="k">const</span> requested = clamp(Number(op.value), 0, 100);
+
+  <span class="c">// A binary motor snaps to fully open or fully closed. The model asked for a
+  // position and gets a truthful observed value back — it never learns why.</span>
+  <span class="k">const</span> binary = <span class="k">this</span>.objectMap.isBinaryCurtain(room.vendorRoomId, op.zone);
+  <span class="k">const</span> applied = binary ? (requested &gt;= 50 ? 100 : 0) : requested;
+
+  <span class="k">await this</span>.conn.setLevel(target.objectId, applied);
+  <span class="k">return</span> { status: <span class="s">'applied'</span>,
+           observed: { capability: op.capability, zone: op.zone,
+                       value: applied, available: <span class="k">true</span> } };
+}</pre>
+
+<p>Return the <em>observed</em> value, not the requested one. The agent confirms from what it
+observes, so a guest asking for 40% in a binary room hears "curtains closed" &mdash; which is true
+&mdash; rather than "set to 40%", which would not be.</p>
+
+<h2>16. Failure, retries, circuit breakers</h2>
+
+<table>
+  <thead><tr><th style="width:26%">Situation</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Head-end slow</td><td>Hard 2.5&nbsp;s budget. Beyond it the result is <code>pending</code>, and the guest is told "I've asked for that" &mdash; never "done".</td></tr>
+    <tr><td>Head-end unreachable</td><td>Return an error. The platform normalises it to <code>TEMPORARILY_UNREACHABLE</code> and offers the front desk.</td></tr>
+    <tr><td>Repeated failures</td><td><strong>Circuit breaker per (property, vendor)</strong>: 5 failures in 30&nbsp;s opens it for 60&nbsp;s.</td></tr>
+    <tr><td>Retry</td><td>Automatic only for reads and reversible physical actions. Never for anything creating a commitment.</td></tr>
+    <tr><td>Idempotency</td><td>Honour the key. Retries happen; double actuation must not.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The circuit breaker is the most important resilience control in the system</div>
+  <p>One hotel's hung head-end must never consume the adapter's capacity for every other property.
+  Without per-property bulkheading, the single most likely production incident is: one flaky BMS
+  takes down voice control for every hotel on the platform.</p>
+  <p>This is also the reason adapters are separate deployable services rather than modules.</p>
+</div>
+
+<h2>17. Verify-read</h2>
+
+<div class="box warn">
+  <div class="bt">Never report success you did not observe</div>
+  <p>The most damaging failure mode in this product is the confident false confirmation: the guest
+  hears "I've turned off the lights", the lights stay on, and the device is dead to them.</p>
+  <p>Real systems <em>acknowledge writes that never take effect</em> &mdash; the simulator models
+  this deliberately as "silent failure". The only defence is reading the state back.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:16%">Return</th><th style="width:34%">When</th><th>Guest hears</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">applied</td><td>Read-back confirms the new value</td><td>"I've set it to 23 degrees."</td></tr>
+    <tr><td class="mono">pending</td><td>Acknowledged but not yet observed</td><td>"I've asked for that &mdash; give it a moment."</td></tr>
+    <tr><td class="mono">rejected</td><td>The system refused it</td><td>"That's not something I can do here."</td></tr>
+    <tr><td><em>throw</em></td><td>Unreachable</td><td>"I can't reach the room systems right now."</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part V</span>On premises</h1>
+
+<h2>18. Why the edge gateway exists</h2>
+
+<p>Four reasons, and they are not negotiable:</p>
+
+<ul>
+  <li>INNCOM and Interel head-ends are <strong>LAN-resident</strong>, typically on an isolated
+  building network with no outbound route and certainly no inbound one.</li>
+  <li>Hotel IT <strong>will not open inbound firewall ports</strong> for a vendor &mdash; and the
+  request alone delays onboarding by months.</li>
+  <li>Round-tripping every light command to a cloud region adds 60&ndash;200&nbsp;ms to an action
+  whose entire budget is under a second.</li>
+  <li>When the property WAN drops &mdash; routine &mdash; the guest must still be able to turn on
+  the lights. Only something inside the building can deliver that.</li>
+</ul>
+
+<pre class="ascii">
+  PATH 1 — VOICE (normal turn)      device ═══► cloud
+     The device's connection merely TRANSITS the hotel network. The edge gateway
+     is NOT in this path. This is commonly misread from the architecture diagram.
+
+  PATH 2 — ACTUATION                cloud ──► (outbound tunnel) ──► edge ──LAN──► head-end
+     The tunnel was opened OUTWARD by the edge. Nothing ever connects inward.
+
+  PATH 3 — OFFLINE ONLY             device ──LAN──► edge ──► head-end
+     The only time the device talks to the edge.
+</pre>
+
+<div class="box warn">
+  <div class="bt">Current implementation gap</div>
+  <p>In this build the cloud creates its own adapter instance and talks to the head-end
+  <strong>directly</strong> &mdash; Path 2 is not wired through the tunnel. The edge gateway exists,
+  works and has passing tests, but is not in the actuation path.</p>
+  <p>Path 3 has the mirror gap: the appliance opens no listening socket, so a device has nothing to
+  reach when the WAN drops. Both are Phase-2 work and both need planning now.</p>
+</div>
+
+<h2>19. What runs on it</h2>
+
+<pre class="ascii">
+ ┌─────────── EDGE GATEWAY (per property; HA pair above ~250 rooms) ────────────┐
+ │  HARDWARE  fanless x86/ARM · 4–8 GB · 128 GB SSD · dual NIC · TPM            │
+ │            optional LTE failover                                            │
+ │                                                                             │
+ │  tunnel-agent     persistent OUTBOUND mTLS. No listening ports.             │
+ │  protocol-driver  INNCOM / Interel / BACnet / KNX / Modbus termination      │
+ │  state-shadow     local current state per room; publishes deltas upstream   │
+ │  fallback-engine  offline rules: local grammar → direct actuation           │
+ │  outbox           durable queue for tickets raised while the WAN was down   │
+ │  health-agent     metrics, remote diagnostics, watchdog                     │
+ └─────────────────────────────────────────────────────────────────────────────┘
+
+  Security: per-property X.509 · secure boot · encrypted disk · outbound 443 only
+            no SSH in production · property-scoped credentials — a compromise
+            reaches ONE hotel
+</pre>
+
+<h1 class="part"><span class="pn">Part VI</span>Practical</h1>
+
+<h2>20. The simulator</h2>
+
+<p>You can build and test a complete adapter integration <strong>without any hotel hardware</strong>.
+The simulator models the behaviours that actually bite.</p>
+
+<pre><span class="k">const</span> adapter = <span class="k">new</span> SimulatorAdapter({
+  latencyMs: 120,           <span class="c">// base write latency, ±40% jitter</span>
+  failureRate: 0.05,        <span class="c">// 5% of calls fail as unreachable</span>
+  silentFailureRate: 0.02,  <span class="c">// acknowledged but NOT applied — the nastiest real bug</span>
+  driftRate: 0.01,          <span class="c">// state changes because a housekeeper used a wall switch</span>
+  binaryCurtainRooms: [<span class="s">'INN-0088'</span>],   <span class="c">// exercise capability degradation</span>
+  seed: 42,                 <span class="c">// deterministic — evals must be reproducible</span>
+});</pre>
+
+<div class="box good">
+  <div class="bt">Build against the simulator first, deliberately</div>
+  <p>Access to real hotel hardware is the biggest velocity constraint on this project, and you
+  cannot ask a hotel to unplug its head-end to test your error handling. Every failure path in your
+  adapter should be exercised here before you touch a real system &mdash; especially silent failure
+  and drift, which are the two you will otherwise discover in production.</p>
+</div>
+
+<h2>21. Conformance testing</h2>
+
+<p>Every adapter ships a suite that runs at onboarding and nightly against a designated test room.
+This is the go-live gate for a property.</p>
+
+<pre>conformanceSuite(): ConformanceTest[] {
+  <span class="k">return</span> [
+    check(<span class="s">'lights on'</span>,        <span class="s">'lighting.on_off'</span>,     <span class="k">true</span>, <span class="s">'bedroom'</span>),
+    check(<span class="s">'lights dim to 40'</span>, <span class="s">'lighting.brightness'</span>, 40,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'setpoint 23'</span>,      <span class="s">'climate.setpoint'</span>,    23,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'mode cool'</span>,        <span class="s">'climate.mode'</span>,      <span class="s">'cool'</span>,  <span class="s">'bedroom'</span>),
+    check(<span class="s">'curtains closed'</span>,  <span class="s">'curtains.position'</span>,    0,   <span class="s">'bedroom'</span>),
+    check(<span class="s">'dnd on'</span>,           <span class="s">'dnd'</span>,               <span class="s">'dnd'</span>),
+  ];
+}</pre>
+
+<pre class="term">npm run eval -- capability     <span class="c"># capability matrix across room types</span>
+npm test                       <span class="c"># everything, including the safety gates</span></pre>
+
+<h2>22. Onboarding a property</h2>
+
+<p>Target: <strong>five working days</strong> for a 300-room property, once an adapter for its vendor
+exists.</p>
+
+<table>
+  <thead><tr><th style="width:8%">Day</th><th style="width:28%">Step</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td><strong>1</strong></td><td>Survey</td><td>Which vendor, which firmware, which integration surface. Room types and what each actually has. Network: is there an IoT VLAN?</td></tr>
+    <tr><td><strong>1&ndash;2</strong></td><td>Room reference mapping</td><td>Hotel room number &rarr; <code>vendorRoomId</code>. <strong>Verify, don't assume.</strong> Import the ETS project for KNX; export the object map for INNCOM.</td></tr>
+    <tr><td><strong>2</strong></td><td>Manifests</td><td>One per room type &mdash; typically six to eight. Plus overrides for rooms with known faults.</td></tr>
+    <tr><td><strong>2</strong></td><td>Property config</td><td>Temperature band, quiet hours, spend caps, emergency number, languages, brand tone.</td></tr>
+    <tr><td><strong>3</strong></td><td>Edge appliance</td><td>Install, bind to the property, verify the outbound tunnel, confirm it reaches the head-end.</td></tr>
+    <tr><td><strong>3&ndash;4</strong></td><td>Conformance</td><td>Run the suite against a designated test room. Every capability in every room type.</td></tr>
+    <tr><td><strong>4</strong></td><td>Device enrolment</td><td>Provision hubs, bind each to its room, <strong>verify the binding</strong> against the automation system.</td></tr>
+    <tr><td><strong>5</strong></td><td>Content &amp; go-live</td><td>Menu with spoken aliases, property FAQ, staff escalation targets, welfare protocol. Canary a floor before the property.</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">The step that goes wrong</div>
+  <p>Room reference mapping. It is tedious, it looks trivial, and getting it wrong means actions
+  land in the wrong room while every log says they succeeded. Budget real time for verification,
+  and re-verify after any refurbishment &mdash; a device moved between rooms produces exactly the
+  same silent failure.</p>
+</div>
+
+<h2>23. Checklist</h2>
+
+<table class="tight">
+  <thead><tr><th style="width:24%">Area</th><th>Check</th></tr></thead>
+  <tbody>
+    <tr><td>MCP tools</td><td>No tool takes a room/property/tenant parameter · scope honoured out of band · cross-tenant reach impossible · returns within 2.5&nbsp;s · idempotent mutations · structured errors · reads are side-effect free</td></tr>
+    <tr><td>Data</td><td>Device resolution cached · <code>vendorRoomId</code> verified per room · manifests per room type not per room · RLS enabled and CI-tested</td></tr>
+    <tr><td>Adapter</td><td>Vendor vocabulary never escapes the file · object map in config not code · idempotency honoured · degradation handled in the adapter · returns <em>observed</em> values · per-property credentials</td></tr>
+    <tr><td>Reliability</td><td>2.5&nbsp;s budget · circuit breaker per (property, vendor) · verify-read on every write · <code>pending</code> distinguished from <code>applied</code></td></tr>
+    <tr><td>Testing</td><td>Conformance suite passes · silent failure exercised · drift exercised · binary degradation exercised · deterministic seed</td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:8mm;">
+Woohoo V2 MCP, Data &amp; Automation Integration Guide<br>
+Interfaces verified against the running build &middot; MCP transport and real vendor adapters are not yet implemented.
+</p>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<h1 class="part"><span class="pn">Part I</span>MCP</h1>
+
+<h2>1. What MCP means here</h2>
+
+<p>MCP is a protocol for exposing capabilities <strong>to a model</strong>. In Woohoo it is an
+<em>internal</em> plane: the agent proposes tool calls, and a gateway executes them. It is not a
+public API, and no external system calls it.</p>
+
+<pre class="ascii">
+   AGENT ───► MCP GATEWAY ───┬──► property catalogue      (rooms, devices, manifests)
+   proposes    the control   ├──► device state    ───► automation adapter ───► the room
+   only        point         ├──► service requests
+                             ├──► F&B orders
+                             ├──► PMS bridge
+                             ├──► knowledge / FAQ
+                             ├──► guest preferences
+                             └──► notification / escalation
+
+   The agent can NEVER address any of these directly. That single rule is what makes
+   tenant scoping mechanical instead of a code-review question.
+</pre>
+
+<div class="box warn">
+  <div class="bt">The gap you need to know about before planning</div>
+  <p>The gateway currently dispatches through an in-process map of handler functions:</p>
+  <pre style="margin:2mm 0 0">const result = await gateway.execute(scoped, ctx);   <span class="c">// a function call</span></pre>
+  <p style="margin-top:2mm">There is <strong>no MCP client, no JSON-RPC, no Streamable HTTP</strong>
+  in the codebase. So the MCP servers you already have &mdash; hotel, room, device, services &mdash;
+  are <strong>not connected to this system</strong>. The gateway was designed to front them, but
+  today it fronts local functions. &sect;3 is that work.</p>
+</div>
+
+<h2>2. The gateway's six jobs</h2>
+
+<p>Understanding these explains why the agent is not simply pointed at your MCP servers directly
+&mdash; which is what MCP is for, and would be right for a single-tenant developer tool.</p>
+
+<table>
+  <thead><tr><th style="width:24%">Job</th><th style="width:38%">What happens without it</th><th>What the gateway does</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Scope injection</strong></td><td>The room to act on comes from <em>model output</em>. A model error or an injected instruction can address another guest's room. Nothing structural prevents it.</td><td>Strips any room/property/tenant field the model produced and injects the real one, derived from the authenticated device.</td></tr>
+    <tr><td><strong>Per-room filtering</strong></td><td>Every hotel sees every tool. A room without curtains gets a curtain tool the model will happily call.</td><td>Filters the advertised tool set by that room's capability manifest before the agent sees it.</td></tr>
+    <tr><td><strong>Result sanitisation</strong></td><td>A menu description edited by a hotel employee becomes a prompt-injection vector.</td><td>Fences untrusted content and scans it before it enters the model's context.</td></tr>
+    <tr><td><strong>Error normalisation</strong></td><td><code>INNCOM: ERR_0x8004</code> reaches the model, which either hallucinates an explanation or apologises uselessly.</td><td>Maps everything into one small vocabulary the model is taught to handle.</td></tr>
+    <tr><td><strong>Caching</strong></td><td>The catalogue is read on every turn and changes weekly &mdash; the hottest and most wasteful query in the system.</td><td>Per-tool TTLs with explicit invalidation.</td></tr>
+    <tr><td><strong>Uniform audit</strong></td><td>Each server logs differently, or not at all.</td><td>One place records every call, its arguments digest, its verdict, latency and outcome.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.1 Scope injection, concretely</h3>
+
+<pre>{ <span class="c">// what the model emitted — note the room_id it invented</span>
+  <span class="s">"tool"</span>: <span class="s">"climate.set_temperature"</span>,
+  <span class="s">"args"</span>: { <span class="s">"zone"</span>: <span class="s">"bedroom"</span>, <span class="s">"targetC"</span>: 23.0, <span class="s">"room_id"</span>: <span class="s">"999"</span> }
+}
+
+{ <span class="c">// what actually executed</span>
+  <span class="s">"tool"</span>: <span class="s">"climate.set_temperature"</span>,
+  <span class="s">"args"</span>: { <span class="s">"zone"</span>: <span class="s">"bedroom"</span>, <span class="s">"targetC"</span>: 23.0 },        <span class="c">// room_id STRIPPED</span>
+  <span class="s">"scope"</span>: {                                          <span class="c">// injected server-side</span>
+    <span class="s">"tenantId"</span>:   <span class="s">"t_demo_apac"</span>,
+    <span class="s">"propertyId"</span>: <span class="s">"p_blr_whitefield"</span>,
+    <span class="s">"roomId"</span>:     <span class="s">"r_412"</span>,
+    <span class="s">"deviceId"</span>:   <span class="s">"d_412a"</span>
+  },
+  <span class="s">"idempotencyKey"</span>: <span class="s">"sha256(turnId | tool | canonical args)"</span>
+}</pre>
+
+<div class="box note">
+  <div class="bt">Stripped, not validated &mdash; and the difference matters</div>
+  <p>Validating a model-supplied <code>room_id</code> against the real one would mean the field
+  exists in the surface. Which means it can be populated. Which means somebody will eventually
+  "temporarily" trust it for a staff feature. Removing the field removes the class of bug.</p>
+  <p><strong>Design your MCP tools the same way: no tool takes a room, property or tenant
+  identifier.</strong> Scope arrives out of band.</p>
+</div>
+
+<h2>3. Connecting your MCP servers</h2>
+
+<p>This is the integration work. Everything above the transport already exists &mdash; you are
+implementing one interface.</p>
+
+<pre><span class="c">// services/woohoo-core/src/modules/mcp-gateway.ts</span>
+<span class="k">export type</span> ToolHandler = (
+  call: ScopedToolCall,   <span class="c">// tool, args, scope, turnId, idempotencyKey</span>
+  ctx:  TurnContext,
+) =&gt; Promise&lt;<span class="k">unknown</span>&gt;;</pre>
+
+<p>Today a handler is a local function. To use a real MCP server, it becomes a client call:</p>
+
+<pre><span class="c">/**
+ * Bridges one Woohoo tool to a tool on a real MCP server.
+ *
+ * Everything above this — filtering, policy, audit — is unchanged. The gateway does not
+ * care whether a handler is local or remote.
+ */</span>
+<span class="k">function</span> mcpHandler(client: McpClient, remoteToolName: <span class="k">string</span>): ToolHandler {
+  <span class="k">return async</span> (call, ctx) =&gt; {
+    <span class="k">const</span> res = <span class="k">await</span> client.callTool({
+      name: remoteToolName,
+      arguments: {
+        ...call.args,
+        <span class="c">// Scope travels OUT OF BAND, not as tool arguments (see §2.1).</span>
+      },
+      <span class="c">// Per-call, audience-bound, short-lived. A compromised server must not be able
+      // to replay this token against a different server.</span>
+      _meta: { woohooScope: call.scope, turnId: call.turnId },
+    }, { timeoutMs: 2500 });
+
+    <span class="k">if</span> (res.isError) {
+      <span class="c">// Normalise. Raw upstream errors must never reach the model.</span>
+      <span class="k">return</span> toolError(
+        ToolErrorCode.TemporarilyUnreachable,
+        <span class="s">'That system is not responding right now.'</span>,
+        <span class="s">'Tell the guest you could not complete it and offer the front desk.'</span>,
+        <span class="k">true</span>,
+      );
+    }
+    <span class="k">return</span> res.content;
+  };
+}</pre>
+
+<h3>3.1 What the MCP server must guarantee</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:26%">Requirement</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Honour the scope, don't trust arguments</strong></td><td>The server must resolve which room from the out-of-band scope, and reject or ignore any room identifier in the arguments. This is the single most important requirement.</td></tr>
+    <tr><td><strong>No cross-tenant reachability</strong></td><td>Given scope for property A, it must be impossible to read or write property B &mdash; even with a crafted argument.</td></tr>
+    <tr><td><strong>Bounded latency</strong></td><td>Return within ~2.5&nbsp;s or fail. The turn has an 8-second wall clock and a guest is standing there.</td></tr>
+    <tr><td><strong>Idempotency</strong></td><td>Honour <code>idempotencyKey</code> on mutations. Retries happen; double actuation must not.</td></tr>
+    <tr><td><strong>Structured errors</strong></td><td>Distinguish "not available in this room" from "upstream is down" &mdash; they produce different things for the guest to hear.</td></tr>
+    <tr><td><strong>No side effects on read</strong></td><td>Read tools are pre-fetched speculatively on most turns, before anyone knows whether they are needed.</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 Transport</h3>
+
+<table class="tight">
+  <thead><tr><th style="width:22%">Option</th><th style="width:16%">Use when</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>In-process</strong></td><td>Today</td><td>Zero latency. Same interface, so promotion later is a config change.</td></tr>
+    <tr><td><strong>Streamable HTTP</strong></td><td>Separately deployed servers</td><td>Recommended. Single stable endpoint, streaming results, works in-VPC over mTLS.</td></tr>
+    <tr><td>stdio</td><td>Local dev only</td><td>Avoid in production &mdash; couples process lifecycles and makes scaling and observability awkward.</td></tr>
+    <tr><td>Third-party servers</td><td><strong>Not yet</strong></td><td>A customer-supplied MCP server is a security decision, not an integration one. It needs sandboxing, separate egress policy, maximally untrusted results, and no access to anything that costs money or moves hardware.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. What must never be an MCP tool</h2>
+
+<div class="box warn">
+  <div class="bt">Automation adapters are not MCP servers, and this is a tempting mistake</div>
+  <p>The symmetry is appealing: if the catalogue is an MCP server, why not <code>inncom-adapter</code>?</p>
+  <p>Because MCP exposes capabilities <strong>to a model</strong>. If the INNCOM adapter were an MCP
+  server, its vendor-shaped tools would appear in the model's world, and within two sprints the
+  agent would be reasoning about object IDs and register writes. The abstraction that makes a new
+  hotel a config change would be dead.</p>
+  <p>Adapters sit <em>behind</em> the device-state server, which presents one vendor-neutral surface.
+  Adding Schneider or Lutron means writing an adapter and a mapping &mdash; the model's tool list,
+  the prompts and the tests all stay untouched.</p>
+</div>
+
+<table class="tight">
+  <thead><tr><th style="width:34%">Never expose as a tool</th><th>Instead</th></tr></thead>
+  <tbody>
+    <tr><td>Anything vendor-shaped &mdash; object IDs, registers, group addresses</td><td>A capability behind an adapter</td></tr>
+    <tr><td>Anything taking a room, property or tenant parameter</td><td>Ambient scope</td></tr>
+    <tr><td>Anything operating on more than one room</td><td>Staff plane, human-authenticated, with a cap on rooms per operation</td></tr>
+    <tr><td>Door locks, safes, microphone activation</td><td>Nothing. No tool exists at any tier, deliberately.</td></tr>
+    <tr><td>Raw SQL or arbitrary query execution</td><td>Purpose-shaped read tools</td></tr>
+    <tr><td>Anything handling a card number</td><td>Folio posting via the PMS only</td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Part II</span>Data</h1>
+
+<h2>5. The domain model</h2>
+
+<pre class="ascii">
+  TENANT (chain) ──1:*──► PROPERTY (hotel) ──1:*──► ROOM ──*:1──► ROOM_TYPE
+                              │                      │               │
+                              │                      │               └─► CAPABILITY_MANIFEST
+                              │                      │                   (versioned)
+                              │                      │
+                              │                      ├─► ROOM_OVERRIDE  (may only REMOVE)
+                              │                      │
+                              │                      └─► vendor_room_id  ← NOT the room number
+                              │
+                              ├──► EDGE_GATEWAY (1–2 per property)
+                              └──► PROPERTY_POLICY (temp bands, quiet hours, spend caps)
+
+  WOOHOO_HUB (the voice device) ──bound to──► ROOM
+      · separate entity, revocable, timestamped, re-verifiable
+</pre>
+
+<div class="box info">
+  <div class="bt">Two modelling decisions worth understanding before you touch the schema</div>
+  <p><strong>The device is not the room.</strong> Modelling the hub as a separate entity with an
+  explicit, timestamped binding is what makes mis-binding detectable. Collapse them &mdash; treat
+  device ID as room ID &mdash; and a device moved during a refurbishment silently controls the wrong
+  room while the audit log records it as correct. That bug surfaces nowhere unless you build for it.</p>
+  <p><strong>The manifest attaches to room type, not room.</strong> A 300-room property has perhaps
+  eight types. Eight manifests plus a handful of overrides is a day's work; three hundred is a
+  project. This single choice is most of the difference between five-day and five-week onboarding.</p>
+</div>
+
+<h2>6. What the agent needs per turn</h2>
+
+<p>Five reads, all fired <strong>in parallel while the guest is still speaking</strong>. Together
+they remove an entire tool round-trip &mdash; roughly 400&ndash;600&nbsp;ms &mdash; from most turns,
+so their latency is on the critical path.</p>
+
+<table>
+  <thead><tr><th style="width:24%">Read</th><th style="width:14%">Budget</th><th style="width:12%">Cache</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Device resolution</strong></td><td>&lt;5&nbsp;ms</td><td>60&nbsp;s</td><td><code>deviceId</code> &rarr; tenant, property, room, manifest, vendor room ref. <strong>Must not cost a DB hit per turn.</strong></td></tr>
+    <tr><td><strong>Room state</strong></td><td>&lt;1.2&nbsp;s</td><td>10&nbsp;s fresh</td><td>Lighting, climate, curtains, DND per zone, plus a freshness marker</td></tr>
+    <tr><td><strong>Open requests</strong></td><td>&lt;300&nbsp;ms</td><td>&mdash;</td><td>So the agent doesn't raise a duplicate</td></tr>
+    <tr><td><strong>Stay context</strong></td><td>&lt;1.5&nbsp;s</td><td>15&nbsp;min</td><td>Checkout time, room type, wifi, folio total &mdash; <strong>tokenised, no guest name</strong> unless consented</td></tr>
+    <tr><td><strong>Preferences</strong></td><td>&lt;300&nbsp;ms</td><td>&mdash;</td><td>Empty unless the guest opted in</td></tr>
+  </tbody>
+</table>
+
+<div class="box good">
+  <div class="bt">Design your reads to be cheap and batched</div>
+  <p>One <code>room.get_state</code> returning everything beats five per-device reads. Every
+  mutating tool should also return the resulting state, which removes a read-back round trip and
+  lets the agent confirm truthfully rather than optimistically.</p>
+</div>
+
+<h2>7. Schema and repositories</h2>
+
+<p>The full schema is in <code>db/migrations/001_init.sql</code>. Core tables:</p>
+
+<pre><span class="c">-- catalogue</span>
+tenant            tenant_id · name · cell · kms_key_arn
+property          property_id · tenant_id · timezone · default_language · config (JSONB)
+room_type         (property_id, room_type_id) · manifest (JSONB) · manifest_version
+room              room_id · property_id · room_number · room_type_id
+                  · vendor_room_id            <span class="c">← the automation system's own reference</span>
+                  · disabled_capabilities[]   <span class="c">← per-room overrides</span>
+device            device_id · tenant_id · property_id · room_id
+                  · certificate_serial · bound_at · binding_verified_at · revoked
+
+<span class="c">-- operations</span>
+service_request   category · description · priority · status · deferred · dispatch_at · sla_due_at
+fnb_menu_item     (property_id, menu_item_id) · name · keywords[] · price · available
+fnb_order         items (JSONB) · total · status · folio_ref
+
+<span class="c">-- guest data — SEPARATE SCHEMA, per-tenant key</span>
+guest_data.stay        stay_ref (tokenised) · checkout_at · wifi · folio
+guest_data.consent     voice · preferences · personalisation
+guest_data.preference  (room_id, key) · value
+
+<span class="c">-- audit — append-only, WORM in production</span>
+turn_record       transcript_redacted · tool_calls (JSONB) · outcome · sealed_at
+escalation        category · severity · notified[] · acknowledged_at</pre>
+
+<h3>7.1 Repository interfaces</h3>
+
+<p>Every store sits behind an interface with an in-memory implementation, which is why the whole
+system runs with no database. Adding Postgres is implementing the same interface.</p>
+
+<pre><span class="k">export interface</span> CatalogRepository {
+  getProperty(propertyId: <span class="k">string</span>): Promise&lt;PropertyConfig | <span class="k">undefined</span>&gt;;
+  getRoom(roomId: <span class="k">string</span>): Promise&lt;RoomRecord | <span class="k">undefined</span>&gt;;
+  getDevice(deviceId: <span class="k">string</span>): Promise&lt;DeviceRecord | <span class="k">undefined</span>&gt;;
+  listRooms(propertyId: <span class="k">string</span>): Promise&lt;RoomRecord[]&gt;;
+  upsertProperty(cfg: PropertyConfig): Promise&lt;<span class="k">void</span>&gt;;
+  upsertRoom(room: RoomRecord): Promise&lt;<span class="k">void</span>&gt;;
+  upsertDevice(device: DeviceRecord): Promise&lt;<span class="k">void</span>&gt;;
+}</pre>
+
+<div class="box warn">
+  <div class="bt">One thing to fix while you are in there</div>
+  <p>All state is currently held in in-process <code>Map</code>s &mdash; sessions, device shadow,
+  pending confirmations, catalogue cache. That means <strong>the service runs as exactly one
+  instance</strong>: two replicas would each hold different conversation history, and a payment
+  confirmation minted on one could not be redeemed on the other.</p>
+  <p>Moving these to Postgres and Redis behind the existing interfaces is what unlocks horizontal
+  scaling. It is a prerequisite for production, not an optimisation.</p>
+</div>
+
+<h2>8. Tenant isolation</h2>
+
+<p>Row-level security is enabled on every tenant-scoped table. It is a <strong>backstop</strong>,
+not the primary control &mdash; the primary control is that every query goes through a repository
+carrying the tenant. RLS is what saves you the day someone forgets.</p>
+
+<pre><span class="c">-- app.tenant_id is set per connection by the repository layer</span>
+CREATE POLICY tenant_isolation ON service_request
+  USING (tenant_id = current_setting('app.tenant_id', true));</pre>
+
+<div class="box note">
+  <div class="bt">The test to write</div>
+  <p>For every store: <em>"if a query here forgot its tenant filter, what would happen?"</em> If the
+  answer is "it returns another hotel's data", you need the backstop. Build a CI test that runs
+  representative queries under a tenant-scoped role and asserts zero cross-tenant rows &mdash; this
+  is the first control a hotel chain's penetration test will probe.</p>
+</div>
+
+<h2>9. Caching and freshness</h2>
+
+<p>Device state is the interesting one. The automation system is the source of truth, but reading it
+every turn is too slow and too fragile.</p>
+
+<pre class="ascii">
+   TRUTH                SHADOW                  CACHE              AGENT
+   ─────────            ──────────              ──────────         ──────────
+   head-end  ──push──►  edge local  ──stream──► cloud state ──►    room.get_state
+             ◄─write──  shadow      ◄─command── service
+
+   fresh   (<10s)     → serve from shadow, no read
+   stale   (10–120s)  → serve from shadow, but verify-read after any write
+   expired (>120s)    → force a synchronous read; if that fails return UNKNOWN
+                        and the agent says "I'm not sure what it's set to right now"
+                        rather than confidently reporting a stale number
+</pre>
+
+<p>Surface the freshness marker in any read tool you build. An honest "unknown" is far better than
+a confident stale value &mdash; the guest can hear the difference when the room doesn't match.</p>
