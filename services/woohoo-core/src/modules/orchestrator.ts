@@ -310,7 +310,11 @@ export class Orchestrator {
       screen = wording.screen;
     }
 
-    if (!speech) speech = 'Done.';
+    // The fallback wording must be derived from what actually happened, never assumed.
+    // A blanket "Done." here is the confident false confirmation this system exists to
+    // avoid: if every proposed action was denied, saying "Done" tells the guest their
+    // request succeeded when the platform in fact refused all of it.
+    if (!speech) speech = fallbackSpeech(calls);
 
     const guardSpan = tracer.startSpan('guard.output');
     const guarded = outputGuard(speech, resolved.room.roomNumber);
@@ -468,6 +472,26 @@ export class Orchestrator {
       ],
     };
   }
+}
+
+/**
+ * Last-resort wording when neither the model nor a template produced a reply.
+ *
+ * Derived strictly from observed outcomes. "Done" is only ever reachable when at least one
+ * call actually succeeded — §37, "never say done on an unconfirmed write".
+ */
+export function fallbackSpeech(calls: ExecutedCall[]): string {
+  if (!calls.length) {
+    return "I'm not sure about that one — would you like me to connect you to the front desk?";
+  }
+  const succeeded = calls.filter((c) => c.verdict.kind === 'ALLOW' && c.result?.ok);
+  if (succeeded.length === calls.length) return 'Done.';
+  if (succeeded.length > 0) {
+    return "I've done part of that, but not all of it. Shall I connect you to the front desk?";
+  }
+  // Nothing succeeded. Do not imply otherwise, and do not explain which rule refused it —
+  // that is internal detail the guest cannot act on.
+  return "I couldn't do that just now. Would you like me to connect you to the front desk?";
 }
 
 /**
