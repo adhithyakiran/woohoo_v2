@@ -19,6 +19,7 @@ build/
 crash.log
 
 # Local artefacts
+woohoo.tar.gz
 coverage/
 .vitest/
 *.log
