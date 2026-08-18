@@ -1,0 +1,276 @@
+<h1 class="part"><span class="pn">Phase 4</span>Resilience &amp; degradation</h1>
+
+<p>Hotels lose internet. Vendors go down. Models rate-limit. What matters is not whether these
+happen but what the guest experiences when they do.</p>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:26%">Induce</th><th style="width:36%">Expected</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P4-01</td><td>Set an invalid API key, restart</td><td>Falls back to the deterministic path. Reply <strong>names what still works</strong> rather than reporting an error. Logs state the reason.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-02</td><td>Block egress to the model</td><td>Same as above. No hang, no stack trace to the guest.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-03</td><td>Model returns 503 (or wait for a real one)</td><td>Retries with backoff, then degrades. Logs show the retry attempts and the final reason.</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-04</td><td>Force degradation level 2</td><td>Simple requests still work; anything else offers the front desk.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-05</td><td>Run the mock head-end with <code>MOCK_FAILURE_RATE=1</code></td><td>Guest told the room systems are unreachable. <strong>Never told the action succeeded.</strong></td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-06</td><td><code>MOCK_SILENT_FAILURE_RATE=1</code></td><td>Verify-read catches it. Reply says <em>&ldquo;I've asked for that&rdquo;</em>, <strong>not &ldquo;done&rdquo;</strong>.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-07</td><td>Repeated head-end failures</td><td>Circuit breaker opens. Other properties unaffected.</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-08</td><td>Kill the container mid-turn</td><td>Restarts, healthy, no corrupt state. Confirmation tokens do not survive — a subsequent <span class="mono">yes</span> charges nothing.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-09</td><td>Drop the WebSocket mid-conversation</td><td>Client reconnects with jittered backoff. Context survives within 30 minutes.</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P4-10</td><td>Unknown <code>deviceId</code></td><td>404 / <code>UNKNOWN_DEVICE</code>, socket closed. No partial processing.</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">P4-06 is the one to run twice</div>
+  <p>Silent failure — the head-end acknowledges a write that never takes effect — is the most
+  dangerous case in the whole system, because everything looks fine except the room. If the reply
+  says &ldquo;done&rdquo; here, the verify-read is broken and <strong>every confirmation the system
+  ever gives is untrustworthy</strong>.</p>
+</div>
+
+<h1 class="part"><span class="pn">Phase 5</span>Performance &amp; capacity</h1>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:26%">Measure</th><th style="width:36%">Target</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P5-01</td><td>Fast-lane latency</td><td>p50 under <strong>100&nbsp;ms</strong> server-side</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-02</td><td>Agentic latency</td><td>p50 under <strong>3&nbsp;s</strong>, p95 under <strong>6&nbsp;s</strong></td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-03</td><td>Fast-lane share</td><td>At least <strong>40%</strong> of a realistic utterance mix avoids the model</td><td><span class="sev minor">Minor</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-04</td><td>Concurrent turns</td><td>50 simultaneous complete without error</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-05</td><td>Sustained load</td><td>30 minutes at expected peak; memory flat, no leak</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-06</td><td>Connection count</td><td>Expected device count connected simultaneously; <code>ulimit -n</code> raised</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-07</td><td>Cost per turn</td><td>Within budget; check <code>costUsd</code> across a sample</td><td><span class="sev minor">Minor</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P5-08</td><td>Model quota</td><td>Provider rate limit exceeds projected peak with headroom. <strong>Free tier will not survive a property.</strong></td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Phase 6</span>Device &amp; audio</h1>
+
+<p>Only meaningful once the Android client exists. Until then, record these as <em>not tested</em>
+rather than passed.</p>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:26%">Check</th><th style="width:36%">Expected</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P6-01</td><td>Wake word</td><td>Fires reliably; false accepts acceptable in a room with a TV on</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-02</td><td>Pre-roll buffer</td><td>First word after the wake phrase is never clipped</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-03</td><td>Buffer never persisted</td><td>No audio written to device storage in a release build</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-04</td><td>Hardware mic mute</td><td>Cuts the mic in the driver, LED lit, verifiable by the guest</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-05</td><td>Single connection</td><td>One WebSocket at boot, not one per turn</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-06</td><td>Filled pause</td><td><code>ack</code> plays within ~50&nbsp;ms of end of speech</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-07</td><td>Real ASR confidence</td><td>Passed through, not hardcoded — verify by mumbling</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-08</td><td>Barge-in</td><td>Guest can interrupt playback and be heard</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-09</td><td>Screen mirrors speech</td><td>Every spoken reply is also readable on screen</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-10</td><td>Escalation display</td><td>Persistent, verbatim, does not auto-dismiss</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-11</td><td>Confirmation display</td><td>Total prominent; no auto-confirm; cancel available</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-12</td><td>No credentials in the APK</td><td><strong>Decompile and confirm.</strong> No cloud keys of any kind</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-13</td><td>TLS</td><td><code>wss://</code> with a valid certificate; plain <code>ws://</code> refused</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-14</td><td>Accented speech</td><td>Test with at least three accents represented in the guest population</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P6-15</td><td>Property vocabulary</td><td>Menu items and local names recognised</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Phase 7</span>Property hardware</h1>
+
+<p>Run against the real automation system in a designated test room. <strong>Never in an occupied
+room.</strong></p>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:26%">Check</th><th style="width:36%">Expected</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P7-01</td><td>Room reference mapping</td><td><strong>Every room</strong> verified: hotel room number &rarr; vendor room id. Spot-check by acting and physically observing.</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-02</td><td>Conformance suite</td><td>Passes for every capability in every room type</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-03</td><td>Lights</td><td>Physically observe on, off and dim</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-04</td><td>Climate</td><td>Setpoint change reaches the fan-coil unit</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-05</td><td>Curtains</td><td>Where present, position or open/close behaves; binary motors degrade sensibly</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-06</td><td>DND</td><td>Door indicator and PMS/housekeeping board agree</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-07</td><td>Wall-switch drift</td><td>Change state at the wall; system reports the true state within the freshness window</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-08</td><td>Head-end unreachable</td><td>Unplug it. Guest told honestly; no false confirmation</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-09</td><td>WAN outage</td><td>Disconnect the property's internet. Document exactly what still works</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-10</td><td>Life safety untouched</td><td>Fire alarm, emergency lighting and door hardware unaffected in every state, including with the platform down</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-11</td><td>Wall controls still work</td><td>Every physical control in the room functions independently of Woohoo</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P7-12</td><td>Room phone</td><td>Works, and is the documented fallback</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">P7-01 is the test people skip, and the one that hurts</div>
+  <p>Room reference mapping is tedious and looks trivial. Getting it wrong means actions land in
+  <strong>the wrong guest's room</strong> while every log records success. Verify physically, room by
+  room, and re-verify after any refurbishment — a device moved between rooms produces exactly the
+  same silent failure.</p>
+</div>
+
+<h1 class="part"><span class="pn">Phase 8</span>Privacy &amp; compliance</h1>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:28%">Check</th><th style="width:34%">Expected</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P8-01</td><td>No audio at rest</td><td>Search the host and the container. <strong>No audio files anywhere.</strong></td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-02</td><td>Transcript redaction</td><td>Say an email, a phone number and a card number; confirm masking in logs and audit</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-03</td><td>No secrets in logs</td><td>API key, wifi password and guest details absent from container logs</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-04</td><td>Audit completeness</td><td>Every turn produces a record with verdicts and outcomes</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-05</td><td>Verdict before execution</td><td>Kill mid-turn; the record still shows what was authorised</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-06</td><td>Guest notice</td><td>In-room notice and check-in notice exist and are accurate</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-07</td><td>Opt-out</td><td>A guest can have the device disabled for their stay, and it visibly is</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-08</td><td>No voice biometrics</td><td>Confirm no speaker identification anywhere — this keeps the system out of biometric law</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-09</td><td>No PAN handling</td><td>No field accepts a card number; redaction blocks it on every path</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-10</td><td>Data residency</td><td>Model endpoint and storage in the agreed region</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-11</td><td>No-train terms</td><td>Written confirmation that guest data is excluded from vendor training</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-12</td><td>DPA signed</td><td>Hotel as controller, Woohoo as processor; sub-processor list current</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P8-13</td><td>Accessibility</td><td>Every function reachable without speech</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Phase 9</span>Operational readiness</h1>
+
+<table>
+  <thead><tr><th style="width:7%">ID</th><th style="width:28%">Check</th><th style="width:34%">Expected</th><th style="width:11%">Severity</th><th style="width:9%">Result</th></tr></thead>
+  <tbody>
+    <tr><td class="id">P9-01</td><td>Kill switches</td><td>Each one tested and timed. Read-only mode reversible</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-02</td><td>Escalation reaches a human</td><td>End to end, to a real staff device, with acknowledgement</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-03</td><td>Unacknowledged alarm</td><td>An escalation nobody acknowledges raises an alert</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-04</td><td>Staff trained</td><td>Front desk and duty manager know what the device does, what it cannot do, and how to disable it</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-05</td><td>Welfare protocol</td><td>Documented, and staff know who responds</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-06</td><td>Rollback</td><td>Previous version restorable in under 15 minutes; practised at least once</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-07</td><td>Monitoring</td><td>Someone is alerted when the service is down. Not &ldquo;we'd notice&rdquo;</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-08</td><td>On-call</td><td>A named person, with a documented path for the hotel to reach them</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-09</td><td>Incident runbook</td><td>Written procedure for: wrong action, unexpected charge, missed escalation, device offline</td><td><span class="sev blocker">Blocker</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-10</td><td>Guest complaint path</td><td>A guest can complain and be answered from the audit record</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-11</td><td>Backups</td><td>Config and audit backed up; restore tested</td><td><span class="sev major">Major</span></td><td><span class="chk"></span></td></tr>
+    <tr><td class="id">P9-12</td><td>Key rotation</td><td>Rotating the model API key does not require a rebuild</td><td><span class="sev minor">Minor</span></td><td><span class="chk"></span></td></tr>
+  </tbody>
+</table>
+
+<h1 class="part"><span class="pn">Phase 10</span>Go / no-go</h1>
+
+<h2>Absolute gates</h2>
+<p>All must be true. Any single failure means no deployment to a room with a guest in it.</p>
+
+<table>
+  <thead><tr><th style="width:6%"></th><th style="width:44%">Gate</th><th>Why it is absolute</th></tr></thead>
+  <tbody>
+    <tr><td><span class="chk"></span></td><td>Zero open <strong>Blockers</strong></td><td>Every one involves safety, privacy, money or truthfulness</td></tr>
+    <tr><td><span class="chk"></span></td><td>Adversarial and safety suites at 100%</td><td>These are the controls a chain's security review will probe</td></tr>
+    <tr><td><span class="chk"></span></td><td>The system never claims an action it did not perform</td><td>The failure mode that ends guest trust permanently</td></tr>
+    <tr><td><span class="chk"></span></td><td>No cross-room or cross-guest access is possible</td><td>Regulatory and reputational, not merely a bug</td></tr>
+    <tr><td><span class="chk"></span></td><td>Emergency escalation reaches a real human, verified</td><td>Someone may one day depend on it</td></tr>
+    <tr><td><span class="chk"></span></td><td>Emergency numbers correct for the jurisdiction</td><td>A wrong number is worse than none</td></tr>
+    <tr><td><span class="chk"></span></td><td>Room reference mapping verified for every room</td><td>Wrong mapping means acting in a stranger's room</td></tr>
+    <tr><td><span class="chk"></span></td><td>No cloud credentials on the device</td><td>A stolen device must not be a breach</td></tr>
+    <tr><td><span class="chk"></span></td><td>Life-safety systems unaffected in every failure mode</td><td>Regulated, and non-negotiable</td></tr>
+    <tr><td><span class="chk"></span></td><td>Kill switch tested and timed</td><td>You will need it before you expect to</td></tr>
+    <tr><td><span class="chk"></span></td><td>Staff trained; welfare protocol documented</td><td>The system escalates <em>to people</em></td></tr>
+    <tr><td><span class="chk"></span></td><td>Rollback practised</td><td>An untested rollback is a hope</td></tr>
+    <tr><td><span class="chk"></span></td><td>DPA signed, residency and no-train confirmed</td><td>Contractual and legal precondition</td></tr>
+    <tr><td><span class="chk"></span></td><td>Guest notice and opt-out in place</td><td>Consent posture depends on it</td></tr>
+  </tbody>
+</table>
+
+<h2>Staged rollout</h2>
+<table>
+  <thead><tr><th style="width:16%">Stage</th><th style="width:20%">Scope</th><th style="width:16%">Duration</th><th>Exit criteria</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Lab</strong></td><td>Bench hardware</td><td>Until stable</td><td>Phases 0&ndash;5 pass</td></tr>
+    <tr><td><strong>Test room</strong></td><td>1 room, no guest</td><td>1 week</td><td>Phases 6&ndash;7 pass; staff have used it</td></tr>
+    <tr><td><strong>Staff rooms</strong></td><td>2&ndash;3 rooms, staff occupants</td><td>1 week</td><td>No Blockers; staff would keep it</td></tr>
+    <tr><td><strong>Canary floor</strong></td><td>~10 guest rooms</td><td>2 weeks</td><td>No safety incidents; complaint rate acceptable; GM content</td></tr>
+    <tr><td><strong>Property</strong></td><td>All rooms</td><td>&mdash;</td><td>Monitoring in place, on-call staffed</td></tr>
+  </tbody>
+</table>
+
+<div class="box note">
+  <div class="bt">Do not skip the staff-room stage</div>
+  <p>Staff will use the device in ways no test plan anticipates, and they will tell you plainly what
+  is wrong. It is the cheapest feedback you will ever get, and it happens before a paying guest is
+  exposed to it.</p>
+</div>
+
+<h1 class="part"><span class="pn">Phase 11</span>Known gaps to close first</h1>
+
+<p>These are known to be incomplete <em>today</em>. Each must be closed or consciously accepted with
+a named owner before the corresponding stage.</p>
+
+<table>
+  <thead><tr><th style="width:26%">Gap</th><th style="width:16%">Blocks</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Speech in and out</strong></td><td>Test room</td><td>Service takes text. Wake word and recognition remain on the device; no server-side ASR or TTS.</td></tr>
+    <tr><td><strong>Android client</strong></td><td>Test room</td><td>Not yet migrated. Credential removal is the priority item.</td></tr>
+    <tr><td><strong>Real vendor adapters</strong></td><td>Test room</td><td>Only the simulator exists. INNCOM/Interel need vendor documentation and hardware.</td></tr>
+    <tr><td><strong>Edge appliance in the actuation path</strong></td><td>Property</td><td>Built and tested, but the cloud currently talks to the adapter directly. Required for LAN-only head-ends and WAN-outage behaviour.</td></tr>
+    <tr><td><strong>Device LAN listener</strong></td><td>Property</td><td>Appliance is outbound-only, so a device has nothing to reach when the WAN drops. Offline mode cannot actuate until this exists.</td></tr>
+    <tr><td><strong>Database persistence</strong></td><td>Canary</td><td>All state in memory; <strong>lost on restart</strong>. Schema exists, repositories do not.</td></tr>
+    <tr><td><strong>Single instance only</strong></td><td>Property</td><td>In-memory state means no horizontal scaling and no redundancy. One reboot takes every room offline.</td></tr>
+    <tr><td><strong>Staff / admin API</strong></td><td>Canary</td><td>No HTTP surface and no authentication. Staff cannot see or manage requests.</td></tr>
+    <tr><td><strong>PMS integration</strong></td><td>Property</td><td>Stay data is seeded locally. No folio posting, no checkout event — so stay-scoped data has no deletion trigger.</td></tr>
+    <tr><td><strong>MCP transport</strong></td><td>&mdash;</td><td>Semantics implemented, protocol not. Existing MCP servers are not connected.</td></tr>
+    <tr><td><strong>Fast-lane shadow evaluation</strong></td><td>Canary</td><td>Fast-path rules are not continuously validated against the agent. Two regressed during development.</td></tr>
+    <tr><td><strong>TLS / domain</strong></td><td>Test room</td><td>Android requires <code>wss://</code>. No device can connect without it.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">Two of these are quietly the most dangerous</div>
+  <p><strong>State is lost on restart.</strong> A container restart drops conversation context and
+  pending confirmations. Harmless in testing; in a live property it means a guest mid-order is
+  silently forgotten.</p>
+  <p><strong>Single instance, no redundancy.</strong> One reboot takes every room in the hotel
+  offline simultaneously. Acceptable for a canary floor with staff who know. Not acceptable for a
+  property that has been told this is a product.</p>
+</div>
+
+<h1 class="part"><span class="pn">Phase 12</span>Sign-off</h1>
+
+<h2>Result summary</h2>
+<table>
+  <thead><tr><th style="width:34%">Phase</th><th style="width:12%">Passed</th><th style="width:12%">Failed</th><th style="width:14%">Blockers open</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>0 — Automated &amp; smoke</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>1 — Core journeys</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>2 — Safety &amp; adversarial</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>3 — Capability &amp; config</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>4 — Resilience</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>5 — Performance</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>6 — Device &amp; audio</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>7 — Property hardware</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>8 — Privacy &amp; compliance</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>9 — Operational readiness</td><td></td><td></td><td></td><td></td></tr>
+  </tbody>
+</table>
+
+<h2>Approval</h2>
+<p>By signing, each party confirms the tests in their area were executed and the results recorded
+are accurate. <strong>Do not sign on the basis of a demonstration.</strong></p>
+
+<div class="sign">
+  <div><div class="lbl">Engineering</div></div>
+  <div><div class="lbl">Product</div></div>
+  <div><div class="lbl">Security / privacy</div></div>
+</div>
+<div class="sign">
+  <div><div class="lbl">Hotel operations</div></div>
+  <div><div class="lbl">Hotel IT</div></div>
+  <div><div class="lbl">Duty manager</div></div>
+</div>
+
+<table style="margin-top:5mm">
+  <thead><tr><th style="width:30%">Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Property</td><td></td></tr>
+    <tr><td>Rooms in scope</td><td></td></tr>
+    <tr><td>Software version / bundle</td><td></td></tr>
+    <tr><td>Model and provider</td><td></td></tr>
+    <tr><td>Automation vendor</td><td></td></tr>
+    <tr><td>Rollout stage approved</td><td></td></tr>
+    <tr><td>Accepted risks (with owner)</td><td></td></tr>
+    <tr><td>Next review date</td><td></td></tr>
+  </tbody>
+</table>
+
+<hr class="soft">
+<p class="small" style="text-align:center;margin-top:6mm;">
+Woohoo V2 Pre-Deployment Test Plan &middot; Version 1.0<br>
+Companions: <code>docs/architecture/</code> (design) &middot; <code>docs/api/</code> (integration) &middot;
+<code>docs/DEPLOY-AWS.md</code> (deployment)
+</p>
+</body>
+</html>

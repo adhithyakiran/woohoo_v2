@@ -3,6 +3,8 @@ export * from './seed.js';
 export * from './modules/orchestrator.js';
 export * from './modules/router.js';
 export * from './modules/catalog.js';
+export * from './modules/provisioning.js';
+export * from './modules/catalog-http.js';
 export * from './modules/device-state.js';
 export * from './modules/service-request.js';
 export * from './modules/fnb.js';

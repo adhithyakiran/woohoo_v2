@@ -18,8 +18,18 @@ export interface LlmRequest {
   /** Assembled context layers 3–5, already fenced (§26). */
   user: string;
   tools: ToolDefinition[];
-  /** Prior tool results within this turn, for the second and third loop rounds. */
-  toolResults?: Array<{ tool: string; ok: boolean; content: string }>;
+  /**
+   * Prior rounds within this turn — what the model called, and what came back.
+   *
+   * Both halves are required. Sending only the results, without the model's own
+   * functionCall turn, leaves the model with no record that it already acted: it
+   * re-proposes the same calls every round, burning an LLM call each time and ending on
+   * a reply that contradicts what actually happened.
+   */
+  rounds?: Array<{
+    calls: LlmToolCall[];
+    results: Array<{ tool: string; ok: boolean; content: string }>;
+  }>;
   maxOutputTokens: number;
   /** Extended reasoning is a latency disaster on a voice path; capped explicitly (§25). */
   thinkingBudget: number;
@@ -41,6 +51,28 @@ export interface LlmProvider {
   readonly name: string;
   readonly model: string;
   generate(req: LlmRequest, signal?: AbortSignal): Promise<LlmResponse>;
+}
+
+/**
+ * Tool name as sent to the model. Gemini's function names are conservative about
+ * punctuation, so dots become underscores on the wire.
+ *
+ * This is deliberately one-way: decoding is done with a lookup table built from the tools
+ * actually advertised, never by reversing the substitution. See the decode site above.
+ */
+export function wireName(toolName: string): string {
+  return toolName.replace(/\./g, '_');
+}
+
+/**
+ * Read an environment variable, treating blank as unset.
+ *
+ * docker-compose substitutes `${FOO:-}` as an empty string when FOO is unset, so every
+ * declared-but-unset variable arrives as `""`. Plain `??` accepts that as a real value.
+ */
+function env(name: string): string | undefined {
+  const v = process.env[name];
+  return v && v.trim() !== '' ? v.trim() : undefined;
 }
 
 export class LlmUnavailableError extends Error {
@@ -75,14 +107,82 @@ export class GeminiProvider implements LlmProvider {
   readonly name = 'gemini';
 
   constructor(
-    readonly model = process.env.WOOHOO_LLM_MODEL ?? 'gemini-2.5-flash',
-    private readonly apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY ?? '',
-    private readonly endpoint = process.env.WOOHOO_LLM_ENDPOINT ??
+    // Accept both naming conventions — WOOHOO_LLM_* is ours, GEMINI_* is what most people
+    // reach for first. Silently ignoring a variable someone clearly meant is a bad failure
+    // mode: they set it, nothing changes, and there is no error to chase.
+    //
+    // Note `env()` rather than `??`: docker-compose substitutes UNSET variables as EMPTY
+    // STRINGS, and `??` only skips null/undefined. That produced a 0ms timeout — every
+    // request aborting instantly — from a variable nobody had set.
+    readonly model = env('WOOHOO_LLM_MODEL') ?? env('GEMINI_MODEL') ?? 'gemini-2.5-flash',
+    private readonly apiKey = env('GOOGLE_API_KEY') ?? env('GEMINI_API_KEY') ?? '',
+    private readonly endpoint = env('WOOHOO_LLM_ENDPOINT') ??
       'https://generativelanguage.googleapis.com/v1beta/models',
+    /** Seconds. A hung upstream must not outlive the turn's own wall clock (§27). */
+    private readonly timeoutMs = Math.max(1, Number(env('GEMINI_TIMEOUT') ?? 20)) * 1000,
   ) {}
 
   static isConfigured(): boolean {
-    return Boolean(process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY);
+    return Boolean(env('GOOGLE_API_KEY') ?? env('GEMINI_API_KEY'));
+  }
+
+  /**
+   * POST with bounded retries on transient upstream failures.
+   *
+   * `timeoutMs` is a budget for the WHOLE call, not per attempt. Sharing a single timer
+   * across attempts silently spends the budget on retries and aborts mid-flight; giving
+   * each attempt its own full timer makes the worst case attempts × timeout, which is far
+   * too long with a guest waiting. So: one deadline, each attempt gets what remains, and
+   * retrying stops when there is not enough left to be worth it.
+   */
+  private async fetchWithRetry(body: unknown, caller?: AbortSignal, attempts = 3): Promise<Response> {
+    const deadline = Date.now() + this.timeoutMs;
+    const remaining = () => deadline - Date.now();
+    let lastStatus = 0;
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) {
+        const backoff = 200 * 2 ** (attempt - 1);
+        const wait = Math.min(backoff + Math.random() * backoff, Math.max(0, remaining() - 1000));
+        if (wait <= 0) break;
+        await new Promise((r) => setTimeout(r, wait));
+      }
+
+      // A retry that cannot finish before the deadline is worse than none — it burns the
+      // remaining budget and still fails.
+      if (remaining() < 1000) break;
+
+      const timer = AbortSignal.timeout(remaining());
+      const signal = caller ? AbortSignal.any([caller, timer]) : timer;
+
+      try {
+        const res = await fetch(`${this.endpoint}/${this.model}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey },
+          body: JSON.stringify(body),
+          signal,
+        });
+        if (res.ok || !RETRYABLE_STATUS.has(res.status)) return res;
+        lastStatus = res.status;
+        // Final attempt: return it so the caller reports the real upstream status.
+        if (attempt === attempts - 1 || remaining() < 1000) return res;
+        console.warn(`[llm] ${res.status} from Gemini, retrying (${attempt + 1}/${attempts - 1})`);
+      } catch (err) {
+        if (caller?.aborted) throw new LlmUnavailableError('Gemini request cancelled');
+        const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+        if (isTimeout) throw new LlmUnavailableError(`Gemini timed out after ${this.timeoutMs}ms`);
+        if (attempt === attempts - 1 || remaining() < 1000) {
+          throw new LlmUnavailableError(`Gemini request failed: ${String(err)}`);
+        }
+        console.warn(`[llm] network error, retrying (${attempt + 1}/${attempts - 1}): ${String(err)}`);
+      }
+    }
+
+    throw new LlmUnavailableError(
+      lastStatus
+        ? `Gemini returned ${lastStatus} on every attempt within ${this.timeoutMs}ms`
+        : `Gemini unreachable within ${this.timeoutMs}ms`,
+    );
   }
 
   async generate(req: LlmRequest, signal?: AbortSignal): Promise<LlmResponse> {
@@ -90,29 +190,14 @@ export class GeminiProvider implements LlmProvider {
 
     const body = {
       systemInstruction: { parts: [{ text: req.system }] },
-      contents: [
-        { role: 'user', parts: [{ text: req.user }] },
-        ...(req.toolResults?.length
-          ? [
-              {
-                role: 'user' as const,
-                parts: [
-                  {
-                    text:
-                      'Tool results:\n' +
-                      req.toolResults
-                        .map((r) => `${r.tool} => ${r.ok ? 'ok' : 'error'}: ${r.content}`)
-                        .join('\n'),
-                  },
-                ],
-              },
-            ]
-          : []),
-      ],
+      // Gemini's function-calling protocol expects the conversation to alternate:
+      // user text -> model functionCall -> user functionResponse -> model ...
+      // Reconstructing the model's own turn is what tells it which calls it already made.
+      contents: buildContents(req),
       tools: [
         {
           functionDeclarations: req.tools.map((t) => ({
-            name: t.name.replace(/\./g, '_'),
+            name: wireName(t.name),
             description: t.description,
             parameters: zodLikeToJsonSchema(t),
           })),
@@ -125,12 +210,11 @@ export class GeminiProvider implements LlmProvider {
       },
     };
 
-    const res = await fetch(`${this.endpoint}/${this.model}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey },
-      body: JSON.stringify(body),
-      signal,
-    });
+    // 503 "high demand" and 429 are explicitly transient and common on shared capacity.
+    // Dropping the guest into degraded mode for one of those wastes a turn that a retry
+    // 400ms later would have served. Permanent errors (bad key, bad model, bad request)
+    // are NOT retried — repeating them just adds latency to a certain failure.
+    const res = await this.fetchWithRetry(body, signal);
 
     if (!res.ok) {
       throw new LlmUnavailableError(`Gemini returned ${res.status}: ${await res.text()}`);
@@ -141,10 +225,20 @@ export class GeminiProvider implements LlmProvider {
     const toolCalls: LlmToolCall[] = [];
     let text = '';
 
+    // Decode via a lookup built from the tools we actually advertised. Reversing the
+    // substitution by character was lossy: `climate.set_temperature` went out as
+    // `climate_set_temperature` and came back as `climate.set.temperature`, because the
+    // original underscore is indistinguishable from the substituted dot. Every such call
+    // was then rejected as an unknown tool.
+    const byWireName = new Map(req.tools.map((t) => [wireName(t.name), t.name]));
+
     for (const p of parts) {
       if (p.functionCall) {
+        const decoded = byWireName.get(p.functionCall.name);
         toolCalls.push({
-          tool: p.functionCall.name.replace(/_/g, '.'),
+          // Fall back to the raw name when the model invents one — the platform must reject
+          // it as unknown rather than have us guess at what was meant.
+          tool: decoded ?? p.functionCall.name,
           args: (p.functionCall.args ?? {}) as Record<string, unknown>,
         });
       } else if (p.text) {
@@ -166,6 +260,49 @@ export class GeminiProvider implements LlmProvider {
     };
   }
 }
+
+/**
+ * Build the Gemini `contents` array for this round.
+ *
+ * The model turn carrying its own functionCall parts is not optional decoration — without
+ * it the model cannot distinguish an action it already performed from one still outstanding.
+ */
+function buildContents(req: LlmRequest): unknown[] {
+  const contents: unknown[] = [{ role: 'user', parts: [{ text: req.user }] }];
+
+  for (const round of req.rounds ?? []) {
+    contents.push({
+      role: 'model',
+      parts: round.calls.map((c) => ({
+        functionCall: { name: wireName(c.tool), args: c.args },
+      })),
+    });
+    contents.push({
+      role: 'user',
+      parts: round.results.map((r) => ({
+        functionResponse: {
+          name: wireName(r.tool),
+          // Gemini expects an object here; a bare string is rejected.
+          response: r.ok ? { result: safeJson(r.content) } : { error: safeJson(r.content) },
+        },
+      })),
+    });
+  }
+
+  return contents;
+}
+
+/** Tool results are JSON where possible, but errors and fences are not. Never throw here. */
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { text: text.slice(0, 2000) };
+  }
+}
+
+/** Transient upstream conditions. Anything else is permanent and must not be retried. */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 interface GeminiResponseShape {
   candidates?: Array<{

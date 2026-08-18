@@ -1,5 +1,8 @@
 import type { LlmProvider, LlmRequest, LlmResponse, LlmToolCall } from './llm.js';
 
+/** One tool outcome, flattened out of the per-round history. */
+type ToolResult = { tool: string; ok: boolean; content: string };
+
 /**
  * Deterministic mock provider.
  *
@@ -25,8 +28,11 @@ export class MockLlmProvider implements LlmProvider {
     // Second round of the loop. A real agent reads the menu it just fetched and then proposes
     // an order from genuine item ids — it never invents one. Modelling that here is what makes
     // the T3 confirmation path (§44.1) exercisable end to end without an API key.
-    if (req.toolResults?.length) {
-      const order = planOrderFromMenu(utterance, req.toolResults, available);
+    // Flatten every prior round: the mock reasons over everything it has learned this turn,
+    // not just the most recent call.
+    const priorResults = (req.rounds ?? []).flatMap((r) => r.results);
+    if (priorResults.length) {
+      const order = planOrderFromMenu(utterance, priorResults, available);
       if (order) {
         return {
           toolCalls: [order],
@@ -36,7 +42,7 @@ export class MockLlmProvider implements LlmProvider {
           reasoningSummary: 'ordering from fetched menu',
         };
       }
-      return respond(compose(req.toolResults), req);
+      return respond(compose(priorResults), req);
     }
 
     const calls = plan(utterance, available, state);
@@ -194,7 +200,7 @@ function plan(u: string, available: Set<string>, state: ParsedState): LlmToolCal
  */
 function planOrderFromMenu(
   u: string,
-  results: NonNullable<LlmRequest['toolResults']>,
+  results: ToolResult[],
   available: Set<string>,
 ): LlmToolCall | undefined {
   if (!available.has('fnb.place_order')) return undefined;
@@ -253,7 +259,7 @@ function refusalFor(u: string): string {
   return "I'm not sure about that one — would you like me to connect you to the front desk?";
 }
 
-function compose(results: NonNullable<LlmRequest['toolResults']>): string {
+function compose(results: ToolResult[]): string {
   const failed = results.filter((r) => !r.ok);
   if (failed.length === results.length) {
     return "I couldn't do that just now. Would you like me to connect you to the front desk?";
@@ -266,19 +272,25 @@ function compose(results: NonNullable<LlmRequest['toolResults']>): string {
 function summarise(tool: string, content: string): string {
   const v = safeParse(content);
   switch (tool) {
+    // On a pending outcome the observed value is what the room STILL reads, not what was
+    // asked for. Quoting it produces "I've asked for 19.5 degrees" to a guest who said 26.
+    // The tool result carries no copy of the request, so the honest reply names no number.
     case 'climate.set_temperature': {
       const s = v?.observed?.value ?? v?.value;
-      const pending = v?.status === 'pending';
-      return pending
-        ? `I've asked for ${s} degrees — give it a moment.`
-        : `I've set it to ${s} degrees.`;
+      if (v?.status === 'pending') return "I've asked for that — give it a moment.";
+      // Never interpolate a missing reading: "I've set it to undefined degrees" is worse
+      // than saying nothing at all.
+      return s == null ? 'Done.' : `I've set it to ${s} degrees.`;
     }
     case 'lighting.set':
       return v?.status === 'pending' ? "I've asked for that light change." : 'Done with the lights.';
     case 'curtains.set':
+      if (v?.status === 'pending') return "I've asked for that — give it a moment.";
       return Number(v?.observed?.value ?? 0) > 50 ? 'Curtains open.' : 'Curtains closed.';
     case 'dnd.set':
-      return 'Do not disturb is set.';
+      return v?.status === 'pending'
+        ? "I've asked for that — give it a moment."
+        : 'Do not disturb is set.';
     case 'service.create_request':
       return v?.deferred
         ? `I've logged that for maintenance — they'll come by after ${v?.dispatchAt ?? 'the morning'} so you're not disturbed tonight.`

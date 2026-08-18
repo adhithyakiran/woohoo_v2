@@ -27,3 +27,4 @@ Thumbs.db
 
 # Generated architecture output — the HTML/PDF are build products of docs/architecture/src
 docs/architecture/Woohoo-V2-Architecture.html
+deploy.sh

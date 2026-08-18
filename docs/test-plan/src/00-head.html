@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Woohoo V2 — Pre-Deployment Test Plan</title>
+<style>
+:root{
+  --ink:#14181f; --ink2:#39424f; --muted:#6b7683; --line:#d7dde5; --line2:#eef1f5;
+  --navy:#16283f; --navy2:#22405f; --accent:#b4791a; --accent-l:#fdf6e7;
+  --teal:#0f6e6a; --teal-l:#e9f5f4; --red:#9d2c2c; --red-l:#fbeeee;
+  --green:#256b3f; --green-l:#ecf6f0; --violet:#5a3d8c; --violet-l:#f2eefa; --grey-l:#f5f7f9;
+}
+@page{ size:A4; margin:15mm 13mm 14mm 13mm; }
+@page:first{ margin:0; }
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;font-size:9.2pt;line-height:1.5;color:var(--ink);margin:0;}
+p{margin:0 0 6pt;}
+strong{font-weight:650;}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:8.1pt;background:var(--grey-l);border:1px solid var(--line2);border-radius:2px;padding:0 3px;color:#1f3350;}
+h1.part{page-break-before:always;font-size:19pt;font-weight:300;color:var(--navy);margin:0 0 4mm;padding-bottom:3mm;border-bottom:2.5px solid var(--accent);letter-spacing:-.3pt;}
+h1.part .pn{display:block;font-size:7.6pt;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:2mm;}
+h2{font-size:12pt;font-weight:600;color:var(--navy);margin:7mm 0 2.5mm;padding-left:3mm;border-left:3.5px solid var(--accent);page-break-after:avoid;}
+h3{font-size:10pt;font-weight:650;color:var(--navy2);margin:5mm 0 2mm;page-break-after:avoid;}
+ul,ol{margin:0 0 6pt;padding-left:16px;} li{margin-bottom:2.5pt;}
+table{width:100%;border-collapse:collapse;margin:2.5mm 0 5mm;font-size:7.9pt;page-break-inside:avoid;}
+thead{display:table-header-group;}
+th{background:var(--navy);color:#fff;text-align:left;padding:4px 5px;font-weight:600;font-size:7.5pt;border:1px solid var(--navy);vertical-align:bottom;}
+td{padding:4px 5px;border:1px solid var(--line);vertical-align:top;}
+tbody tr:nth-child(even) td{background:#f8fafc;}
+.mono{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.5pt;}
+.id{font-family:"Cascadia Mono",Consolas,monospace;font-size:7.5pt;font-weight:700;color:var(--navy2);white-space:nowrap;}
+.box{border:1px solid var(--line);border-left:4px solid var(--navy);background:var(--grey-l);padding:3.5mm 4.5mm;margin:3.5mm 0;border-radius:0 3px 3px 0;page-break-inside:avoid;}
+.box .bt{font-size:7.2pt;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--navy);margin-bottom:1.8mm;}
+.box p:last-child,.box ul:last-child,.box ol:last-child{margin-bottom:0;}
+.box.warn{border-left-color:var(--red);background:var(--red-l);} .box.warn .bt{color:var(--red);}
+.box.good{border-left-color:var(--green);background:var(--green-l);} .box.good .bt{color:var(--green);}
+.box.info{border-left-color:var(--teal);background:var(--teal-l);} .box.info .bt{color:var(--teal);}
+.box.note{border-left-color:var(--accent);background:var(--accent-l);} .box.note .bt{color:#8a5c0d;}
+pre{font-family:"Cascadia Mono",Consolas,monospace;font-size:7pt;line-height:1.4;background:#fbfcfd;border:1px solid var(--line);border-radius:3px;padding:3mm;margin:2.5mm 0 4mm;white-space:pre;overflow-x:auto;page-break-inside:avoid;color:#1b2734;}
+pre.term{background:#131c27;color:#cfe0ee;border-color:#131c27;font-size:7.1pt;}
+pre .c{color:#7d94a8;} pre.term .c{color:#7d94a8;} pre.term .g{color:#7ddc9a;} pre.term .r{color:#f08a8a;}
+.sev{display:inline-block;font-size:6.6pt;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:.7mm 1.8mm;border-radius:2.5px;white-space:nowrap;}
+.blocker{background:var(--red-l);color:var(--red);border:1px solid #e5b7b7;}
+.major{background:var(--accent-l);color:#8a5c0d;border:1px solid #e6d09a;}
+.minor{background:var(--grey-l);color:var(--muted);border:1px solid var(--line);}
+.chk{width:9px;height:9px;border:1.4px solid var(--navy2);border-radius:2px;display:inline-block;}
+.cover{height:297mm;width:210mm;background:linear-gradient(150deg,#2b1a0d 0%,#3f2812 45%,#5c3a1a 100%);color:#fff;padding:28mm 22mm;position:relative;page-break-after:always;}
+.cover .kicker{font-size:9pt;letter-spacing:.34em;text-transform:uppercase;color:#e8c07a;font-weight:600;}
+.cover h1{font-size:36pt;line-height:1.06;margin:14mm 0 0;font-weight:300;letter-spacing:-.5pt;}
+.cover h1 b{font-weight:650;display:block;color:#f0d09a;}
+.cover .sub{font-size:12pt;color:#d6c3a8;margin-top:9mm;font-weight:300;line-height:1.5;max-width:136mm;}
+.cover .rule{width:52mm;height:3px;background:#e8c07a;margin:11mm 0;}
+.cover .meta{position:absolute;bottom:26mm;left:22mm;right:22mm;font-size:8.4pt;color:#c0ab8e;display:grid;grid-template-columns:repeat(3,1fr);gap:6mm;border-top:1px solid rgba(255,255,255,.18);padding-top:5mm;}
+.cover .meta b{display:block;color:#f0d09a;font-size:7.2pt;letter-spacing:.14em;text-transform:uppercase;margin-bottom:1.8mm;font-weight:600;}
+.badge{display:inline-block;border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:3px 12px;font-size:7.8pt;color:#f0e4d2;margin-right:5px;margin-top:4px;}
+.toc{column-count:2;column-gap:8mm;font-size:8.2pt;}
+.toc .tp{font-weight:700;color:var(--navy);margin:3mm 0 1mm;border-bottom:1px solid var(--line);padding-bottom:.8mm;break-after:avoid;}
+.toc .ti{color:var(--ink2);margin-bottom:.8mm;padding-left:3mm;text-indent:-3mm;}
+.toc .ti b{color:var(--accent);font-weight:700;margin-right:1.5mm;}
+.small{font-size:7.6pt;color:var(--muted);}
+hr.soft{border:0;border-top:1px solid var(--line);margin:5mm 0;}
+.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5mm;margin:5mm 0;}
+.sign div{border:1px solid var(--line);border-radius:4px;padding:4mm;min-height:26mm;}
+.sign .lbl{font-size:7pt;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Smart Beings &middot; Woohoo Platform</div>
+  <h1>Pre-Deployment<b>Test Plan</b></h1>
+  <div class="rule"></div>
+  <div class="sub">
+    Everything that must pass before a Woohoo device is installed in a room a
+    paying guest sleeps in &mdash; with the exact commands to run and the
+    criteria that decide go or no-go.
+  </div>
+  <div>
+    <span class="badge">9 phases</span>
+    <span class="badge">Runnable commands</span>
+    <span class="badge">Go / no-go gates</span>
+    <span class="badge">Sign-off</span>
+  </div>
+  <div class="meta">
+    <div><b>Use</b>Follow in order, record results</div>
+    <div><b>Gate</b>Any BLOCKER open = do not deploy</div>
+    <div><b>Version</b>1.0</div>
+  </div>
+</div>
+
+<h1 class="part"><span class="pn">How to use this</span>Before you start</h1>
+
+<p>This document is a checklist to work through, not background reading. Follow the phases in
+order: each assumes the previous one passed, and a failure early makes later results
+meaningless.</p>
+
+<h2>Severity, and what it means for deployment</h2>
+<table>
+  <thead><tr><th style="width:14%">Severity</th><th style="width:30%">Meaning</th><th>Effect on deployment</th></tr></thead>
+  <tbody>
+    <tr><td><span class="sev blocker">Blocker</span></td><td>Safety, privacy, money, or the guest is told something untrue</td><td><strong>Stop.</strong> No deployment to any room with a guest in it, regardless of schedule pressure.</td></tr>
+    <tr><td><span class="sev major">Major</span></td><td>A core function does not work, or works unreliably</td><td>No general rollout. A single staff-occupied test room is acceptable.</td></tr>
+    <tr><td><span class="sev minor">Minor</span></td><td>Wording, polish, an edge case</td><td>Deploy, log it, fix in the next release.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <div class="bt">The one rule that overrides schedule</div>
+  <p>A device in a guest bedroom that <strong>says something untrue</strong> &mdash; claims an action
+  succeeded when it did not, claims a capability it lacks, or implies it has summoned help it
+  cannot summon &mdash; is worse than a device that does not work at all. A guest forgives a system
+  that says &ldquo;I can't do that&rdquo;. They do not forgive one that lies, and neither will the
+  hotel.</p>
+  <p>Every Blocker in Phase 2 exists for that reason.</p>
+</div>
+
+<h2>Recording results</h2>
+<p>For each test record: date, tester, pass/fail, and for any failure the observed behaviour and a
+ticket reference. A test that was &ldquo;probably fine&rdquo; is a fail &mdash; re-run it until the
+result is unambiguous.</p>
+
+<h2>Environment</h2>
+<table>
+  <thead><tr><th style="width:22%">Item</th><th style="width:30%">Value</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Service endpoint</td><td class="mono">http://&lt;host&gt;:8443</td><td>Via SSH tunnel or direct, depending on network</td></tr>
+    <tr><td>Test console</td><td class="mono">http://&lt;host&gt;:8443/</td><td>Where most of these tests are easiest to run</td></tr>
+    <tr><td>Test devices</td><td class="mono">d_412a · d_511a · d_512a</td><td>Deluxe · Suite · Suite with a disabled capability</td></tr>
+    <tr><td>LLM provider</td><td class="mono">gemini-2.5-flash</td><td>Confirm via <code>/health</code>; must read <code>"provider":"gemini"</code></td></tr>
+    <tr><td>Automation</td><td>Simulator, then real head-end</td><td>Phase 7 requires real hardware</td></tr>
+  </tbody>
+</table>
+
+<h2>Contents</h2>
+<div class="toc">
+  <div class="tp">Preparation</div>
+  <div class="ti"><b>0</b> Automated suites &amp; smoke</div>
+
+  <div class="tp">Functional</div>
+  <div class="ti"><b>1</b> Core guest journeys</div>
+  <div class="ti"><b>2</b> Safety &amp; adversarial</div>
+  <div class="ti"><b>3</b> Capability &amp; configuration</div>
+
+  <div class="tp">Non-functional</div>
+  <div class="ti"><b>4</b> Resilience &amp; degradation</div>
+  <div class="ti"><b>5</b> Performance &amp; capacity</div>
+
+  <div class="tp">Integration</div>
+  <div class="ti"><b>6</b> Device &amp; audio</div>
+  <div class="ti"><b>7</b> Property hardware</div>
+
+  <div class="tp">Governance</div>
+  <div class="ti"><b>8</b> Privacy &amp; compliance</div>
+  <div class="ti"><b>9</b> Operational readiness</div>
+
+  <div class="tp">Decision</div>
+  <div class="ti"><b>10</b> Go / no-go criteria</div>
+  <div class="ti"><b>11</b> Known gaps to close first</div>
+  <div class="ti"><b>12</b> Sign-off</div>
+</div>

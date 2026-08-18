@@ -95,6 +95,30 @@ function absentCapabilitiesNote(p: PropertyConfig): string {
   return missing.length ? `This property does NOT have: ${missing.join('; ')}.` : '';
 }
 
+/**
+ * What this room cannot do, in guest-facing terms.
+ *
+ * Derived by diffing the room's generated tool surface against the full catalogue, so it
+ * stays correct automatically as capabilities and manifests change — nothing to maintain
+ * by hand, and no way for it to drift out of step with what was actually filtered.
+ */
+function absentInThisRoom(available: ToolDefinition[]): string[] {
+  const have = new Set(available.map((t) => t.name));
+  const phrasing: Record<string, string> = {
+    'curtains.set': 'motorised curtains or blinds (any curtains in this room are manual)',
+    'scene.apply': 'lighting scenes',
+    'media.control': 'in-room music playback',
+    'climate.set_temperature': 'temperature control',
+    'lighting.set': 'controllable lighting',
+    'tv.control': 'television control',
+    'fnb.place_order': 'in-room dining orders through you',
+    'preferences.set': 'saved preferences',
+  };
+  return Object.entries(phrasing)
+    .filter(([tool]) => !have.has(tool))
+    .map(([, text]) => `- ${text}`);
+}
+
 export function assembleContext(input: ContextInputs): AssembledContext {
   const { ctx, property } = input;
 
@@ -120,6 +144,19 @@ export function assembleContext(input: ContextInputs): AssembledContext {
       `</turn_context>`,
     ].join('\n'),
   );
+
+  // Explicit negative facts for THIS room (§47). Filtering the tool away stops the model
+  // ACTING on a missing capability, but not from claiming it has one — observed with a real
+  // model offering to close curtains in a room that has none, and naming a zone that does
+  // not exist. Absence has to be stated, not merely implied by omission.
+  const absent = absentInThisRoom(input.tools);
+  if (absent.length) {
+    parts.push(
+      `<this_room_does_not_have>\n${absent.join('\n')}\n</this_room_does_not_have>\n` +
+        `Never offer or claim to perform any of the above. Say plainly that the room does not ` +
+        `have it, and offer staff.connect if the guest needs help.`,
+    );
+  }
 
   // Pre-fetched state (§27.2). Present in the majority of turns, which removes an entire tool
   // round-trip — roughly 400–600ms — from the common case.

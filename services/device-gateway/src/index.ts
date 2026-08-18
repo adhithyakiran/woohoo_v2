@@ -1,6 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { App } from '@woohoo/core';
+import type { App, TurnResponse } from '@woohoo/core';
+import {
+  listConfigured,
+  provisionRoom,
+  ProvisioningError,
+  RoomProvisionSchema,
+} from '@woohoo/core';
+import { CONSOLE_HTML } from './console.js';
 
 /**
  * Device Gateway — architecture doc §8 ①, §10.3, §19.
@@ -22,6 +30,36 @@ export interface GatewayOptions {
   /** Max turns per device per hour, mirroring the PDP's own limit as a cheap early gate. */
   maxTurnsPerHour?: number;
   heartbeatMs?: number;
+}
+
+/**
+ * Token guarding the provisioning endpoints.
+ *
+ * Generated when unset rather than defaulting to open: this instance is one firewall rule away
+ * from the public internet and /v1/admin/rooms can bind a device to any room. The generated
+ * value is printed at startup and shown in the console, so it costs a local operator nothing
+ * while being useless to anyone who has only found the port.
+ */
+const ADMIN_TOKEN =
+  process.env.WOOHOO_ADMIN_TOKEN?.trim() || 'gen_' + randomBytes(12).toString('hex');
+export const adminTokenIsGenerated = !process.env.WOOHOO_ADMIN_TOKEN?.trim();
+
+/** The provisioning token, for startup logging and the console. Never sent to the model. */
+export function adminToken(): string {
+  return ADMIN_TOKEN;
+}
+
+/** The seeded property. Everything is single-property until a second one exists to test with. */
+const DEFAULT_PROPERTY = process.env.WOOHOO_PROPERTY_ID?.trim() || 'p_blr_whitefield';
+
+/** Read a bounded request body. A transcript is a sentence and a room is a small object. */
+async function readBody(req: IncomingMessage, limit = 16_384): Promise<string> {
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > limit) throw new Error('body too large');
+  }
+  return raw;
 }
 
 interface Connection {
@@ -51,6 +89,9 @@ export type ServerMessage =
 
 export class DeviceGateway {
   private readonly connections = new Map<WebSocket, Connection>();
+  /** Live turn-feed subscribers (the console). Any turn from any transport is broadcast
+   *  here, so a curl from a terminal shows up in the UI without polling. */
+  private readonly feed = new Set<ServerResponse>();
   private wss?: WebSocketServer;
   private http?: Server;
   private heartbeat?: NodeJS.Timeout;
@@ -99,6 +140,53 @@ export class DeviceGateway {
     await new Promise<void>((resolve) => this.http?.close(() => resolve()) ?? resolve());
   }
 
+  /** One shape for the HTTP response, the WS push and the live feed, so they cannot drift. */
+  private turnPayload(result: TurnResponse, transport: 'http' | 'ws') {
+    return {
+      kind: 'turn.completed' as const,
+      turnId: result.turnId,
+      at: new Date().toISOString(),
+      transport,
+      transcript: result.transcript,
+      speech: result.speech,
+      screen: result.screen,
+      lane: result.lane,
+      escalated: result.escalated,
+      awaitingConfirmation: result.awaitingConfirmation,
+      degradationLevel: result.degradationLevel,
+      totalMs: result.totalMs,
+      costUsd: Number(result.costUsd.toFixed(6)),
+      reasoning: result.reasoning,
+      // Per-call outcomes. Arguments stay out: they can carry guest content, and the audit
+      // record is the place for those.
+      calls: result.calls.map((c) => ({
+        tool: c.tool,
+        tier: c.verdict.tier,
+        verdict: c.verdict.kind,
+        ruleId: c.verdict.ruleId,
+        reason: c.verdict.reason,
+        ok: Boolean(c.result?.ok),
+        error: c.result?.error?.error,
+        latencyMs: c.result?.latencyMs,
+      })),
+      pipeline: result.pipeline,
+      guardrails: result.guardrails,
+      // The head-end traffic behind those calls: object addressed, value asked for, value
+      // the controller reported back. This is the layer that fails in a real hotel, and
+      // capability-level logging hides it completely.
+      vendorCalls: result.vendorCalls,
+    };
+  }
+
+  /** Push a turn to every live-feed subscriber. Never allowed to break the turn itself. */
+  private broadcast(payload: unknown): void {
+    if (!this.feed.size) return;
+    const frame = 'data: ' + JSON.stringify(payload) + String.fromCharCode(10, 10);
+    for (const res of this.feed) {
+      try { res.write(frame); } catch { this.feed.delete(res); }
+    }
+  }
+
   /**
    * HTTP surface — architecture doc §19.
    *
@@ -113,9 +201,30 @@ export class DeviceGateway {
   private async onHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
+    // CORS. A browser-based caller — the web UI, or this console pointed at another host —
+    // cannot read a cross-origin response without these, and the failure surfaces in the
+    // browser as an opaque network error that looks like the server being down.
+    //
+    // Permissive because there is nothing here to protect with an origin check: the turn
+    // endpoint is unauthenticated, so an origin allowlist would be security theatre. The
+    // control that matters is the firewall, and eventually device authentication.
+    const cors = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,OPTIONS',
+      'access-control-allow-headers': 'content-type',
+      'access-control-max-age': '600',
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, cors);
+      res.end();
+      return;
+    }
+
     const json = (status: number, body: unknown) => {
       const payload = JSON.stringify(body);
       res.writeHead(status, {
+        ...cors,
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(payload),
         'cache-control': 'no-store',
@@ -123,8 +232,115 @@ export class DeviceGateway {
       res.end(payload);
     };
 
+    // Test console. Served from the gateway itself so it works over an SSH tunnel with no
+    // separate host, no build step and no CDN — the interesting behaviour of this system
+    // (lane, verdicts, rule IDs) is invisible in a raw HTTP response.
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/console')) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(CONSOLE_HTML);
+      return;
+    }
+
+    // Live turn feed. Lets the console show turns that originated anywhere — a curl from a
+    // terminal, the Android app, another service — without polling.
+    if (req.method === 'GET' && url.pathname === '/v1/events') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'access-control-allow-origin': '*',
+      });
+      res.write('retry: 2000' + String.fromCharCode(10, 10));
+      this.feed.add(res);
+      const keepalive = setInterval(() => {
+        try { res.write(': keepalive' + String.fromCharCode(10, 10)); } catch { /* closed */ }
+      }, 20_000);
+      keepalive.unref?.();
+      req.on('close', () => { clearInterval(keepalive); this.feed.delete(res); });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/health') {
-      json(200, { status: 'ok', connections: this.connections.size, uptimeS: Math.round(process.uptime()) });
+      json(200, {
+        status: 'ok',
+        connections: this.connections.size,
+        uptimeS: Math.round(process.uptime()),
+        // Surfaced so it is obvious at a glance whether the real model is wired up —
+        // "why is it behaving like a pattern matcher" is otherwise a slow thing to notice.
+        provider: this.opts.app.llm.name,
+        model: this.opts.app.llm.model,
+        // Same reasoning for the room adapter: a stack quietly running the in-process
+        // simulator looks identical to one driving real hardware until someone walks
+        // into the room and finds the lights did not move.
+        adapter: this.opts.app.adapter.vendor,
+      });
+      return;
+    }
+
+    // ── provisioning (control plane) ──────────────────────────────────────
+    // Deliberately not on the MCP tool surface: anything the agent can call is something it
+    // can be argued into calling, and "make a room with every capability and bind my device"
+    // is exactly what an attacker would ask for.
+    if (url.pathname === '/v1/admin/rooms') {
+      const supplied = (req.headers['x-admin-token'] as string | undefined)?.trim();
+      if (supplied !== ADMIN_TOKEN) {
+        json(401, {
+          error: 'UNAUTHORISED',
+          detail: 'Send the admin token in the x-admin-token header. It is printed in the '
+            + 'service logs at startup and shown in the console Rooms tab.',
+        });
+        return;
+      }
+
+      const propertyId = url.searchParams.get('propertyId') ?? DEFAULT_PROPERTY;
+
+      if (req.method === 'GET') {
+        try {
+          json(200, await listConfigured(this.opts.app.catalogRepo, this.opts.app.catalog, propertyId));
+        } catch (err) {
+          const status = err instanceof ProvisioningError ? err.status : 500;
+          json(status, { error: 'LIST_FAILED', detail: String(err instanceof Error ? err.message : err) });
+        }
+        return;
+      }
+
+      if (req.method === 'POST') {
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          json(400, { error: 'BAD_REQUEST', detail: 'Body was not valid JSON.' });
+          return;
+        }
+
+        const parsed = RoomProvisionSchema.safeParse(body);
+        if (!parsed.success) {
+          json(400, {
+            error: 'INVALID_ROOM',
+            detail: parsed.error.issues.map((i) => i.path.join('.') + ': ' + i.message).join('; '),
+          });
+          return;
+        }
+
+        try {
+          const room = await provisionRoom(
+            this.opts.app.catalogRepo,
+            this.opts.app.catalog,
+            parsed.data,
+            propertyId,
+          );
+          json(201, { created: room });
+        } catch (err) {
+          const status = err instanceof ProvisioningError ? err.status : 500;
+          json(status, {
+            error: 'PROVISION_FAILED',
+            detail: String(err instanceof Error ? err.message : err),
+          });
+        }
+        return;
+      }
+
+      json(405, { error: 'METHOD_NOT_ALLOWED', detail: 'Use GET to list or POST to create.' });
       return;
     }
 
@@ -161,32 +377,25 @@ export class DeviceGateway {
       }
 
       try {
+        // Announce arrival before doing the work, so an observer sees the request land and
+        // sees it running rather than only learning about it once it is already over.
+        this.broadcast({
+          kind: 'turn.received',
+          at: new Date().toISOString(),
+          transport: 'http',
+          deviceId: body.deviceId,
+          transcript: body.transcript,
+        });
+
         const result = await this.opts.app.orchestrator.handleTurn({
           deviceId: body.deviceId,
           transcript: body.transcript,
           asrConfidence: body.asrConfidence ?? 0.95,
         });
 
-        json(200, {
-          turnId: result.turnId,
-          speech: result.speech,
-          screen: result.screen,
-          lane: result.lane,
-          escalated: result.escalated,
-          awaitingConfirmation: result.awaitingConfirmation,
-          degradationLevel: result.degradationLevel,
-          totalMs: result.totalMs,
-          // Per-call outcomes, so an integrator can see WHY as well as what. Deliberately
-          // excludes arguments and reasoning: those live in the audit record, not on the wire.
-          calls: result.calls.map((c) => ({
-            tool: c.tool,
-            tier: c.verdict.tier,
-            verdict: c.verdict.kind,
-            ruleId: c.verdict.ruleId,
-            ok: Boolean(c.result?.ok),
-            error: c.result?.error?.error,
-          })),
-        });
+        const payload = this.turnPayload(result, 'http');
+        this.broadcast(payload);
+        json(200, payload);
       } catch (err) {
         // An unknown or revoked device is a client error, not a server fault.
         const message = err instanceof Error ? err.message : String(err);
@@ -320,6 +529,14 @@ export class DeviceGateway {
     }
     conn.turnTimestamps.push(now);
 
+    this.broadcast({
+      kind: 'turn.received',
+      at: new Date().toISOString(),
+      transport: 'ws',
+      deviceId: conn.deviceId,
+      transcript: msg.transcript,
+    });
+
     // Acknowledge immediately from the cached phrase pack. This is the §20.4 filled pause and
     // it is why perceived latency is ~600ms even when the agentic lane takes far longer.
     this.send(ws, {
@@ -335,6 +552,9 @@ export class DeviceGateway {
       });
       this.send(ws, { type: 'speak', text: res.speech, turnId: res.turnId });
       if (res.screen) this.send(ws, { type: 'screen', text: res.screen });
+      // WebSocket turns appear in the live feed too, so the console shows device traffic
+      // regardless of which transport produced it.
+      this.broadcast(this.turnPayload(res, 'ws'));
     } catch (err) {
       this.send(ws, {
         type: 'error',

@@ -212,7 +212,16 @@ export class SimulatorAdapter implements AutomationAdapter {
         return { status: 'rejected', message: `Unsupported capability ${op.capability}` };
     }
 
-    const result: CapabilityResult = { status: 'applied', observed };
+    // A silent failure must not be reported as applied. The simulator knows perfectly well
+    // that it did not act, and claiming otherwise makes the whole verify-read chain above it
+    // meaningless: every layer downstream is entitled to trust this status.
+    const result: CapabilityResult = silent
+      ? {
+          status: 'pending',
+          observed,
+          message: 'acknowledged by the controller but the value did not change',
+        }
+      : { status: 'applied', observed };
     this.seen.set(dedupeKey, result);
     this.emit(room, observed);
     return result;

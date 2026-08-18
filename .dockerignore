@@ -1,0 +1,36 @@
+# node_modules must NEVER enter the image: it is 69 MB and, worse, contains
+# platform-specific binaries (esbuild, etc.) built for the developer's OS.
+# Copying a Windows/macOS build into a Linux container breaks tsx at runtime.
+node_modules
+**/node_modules
+
+# Build and test artefacts
+dist
+build
+coverage
+.vitest
+*.tsbuildinfo
+
+# Docs are large (PDFs) and not needed to run the service
+docs
+
+# Local state and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# VCS and editor
+.git
+.github
+.gitignore
+.vscode
+.idea
+*.log
+.DS_Store
+Thumbs.db
+
+# Infra that is applied from a workstation, not from inside the image
+infra

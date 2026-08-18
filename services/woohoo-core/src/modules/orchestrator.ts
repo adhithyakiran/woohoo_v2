@@ -1,11 +1,19 @@
 import {
   EventType,
   makeEvent,
+  TOOLS,
   type EventBus,
   type PropertyConfig,
   type TurnContext,
 } from '@woohoo/contracts';
-import { createTracer, type Tracer } from '@woohoo/otel';
+import {
+  createTracer,
+  serialiseSpans,
+  withVendorLog,
+  type SerialisedSpan,
+  type Tracer,
+  type VendorCall,
+} from '@woohoo/otel';
 import type { PolicyDecisionPoint } from '@woohoo/policy';
 import { AgentRuntime, type AgentOutput, type ExecutedCall } from '../agent/runtime.js';
 import { LlmUnavailableError } from '../agent/llm.js';
@@ -17,6 +25,7 @@ import type { GuestService } from './guest.js';
 import { escalationSpeech, type NotificationService } from './notification.js';
 import { McpGateway } from './mcp-gateway.js';
 import { redact } from './redaction.js';
+import { reportGuardrails, type GuardrailReport } from './guardrails.js';
 import { Router, type Lane } from './router.js';
 import type { ServiceRequestService } from './service-request.js';
 import { SessionStore } from './session.js';
@@ -65,6 +74,15 @@ export interface TurnResponse {
   costUsd: number;
   totalMs: number;
   tracer: Tracer;
+  /** Per-stage timings, for the pipeline view. */
+  pipeline: SerialisedSpan[];
+  /** Every HTTP call made to the property head-end during this turn (§39). */
+  vendorCalls: VendorCall[];
+  /** Which safety control ran at each stage and what it did (§46). */
+  guardrails: GuardrailReport[];
+  /** The model's own summary of why it proposed what it did, when it gave one. */
+  reasoning?: string;
+  transcript: string;
 }
 
 /** Cached acknowledgements played from the device phrase pack while the agent works (§20.4). */
@@ -104,7 +122,19 @@ export class Orchestrator {
     return this.sessions;
   }
 
+  /**
+   * Run a turn, collecting the head-end calls it makes along the way.
+   *
+   * The vendor log is scoped to this call rather than to the process, so concurrent turns in
+   * different rooms cannot pick up each other's device traffic.
+   */
   async handleTurn(req: TurnRequest): Promise<TurnResponse> {
+    const vendorCalls: VendorCall[] = [];
+    const res = await withVendorLog(vendorCalls, () => this.runTurn(req));
+    return { ...res, vendorCalls };
+  }
+
+  private async runTurn(req: TurnRequest): Promise<TurnResponse> {
     const startedAt = Date.now();
     const tracer = createTracer();
     const root = tracer.startSpan('orchestrator.turn');
@@ -223,7 +253,11 @@ export class Orchestrator {
           const agentOut = await this.runAgent(agentInput);
           lane = 'agentic';
           recorder.setLane('agentic');
-          calls = agentOut.calls;
+          // Keep the fast-lane attempt in the record. It was proposed, the PDP ruled on it,
+          // and that ruling is the whole reason the turn escalated — overwriting it reported
+          // a policy DENY as "no tool calls proposed, nothing required authorisation", which
+          // tells an operator the platform stood by while it was in fact blocking something.
+          calls = [call, ...agentOut.calls];
           speech = agentOut.text;
           escalated = agentOut.escalated;
           costUsd = agentOut.costUsd;
@@ -255,7 +289,11 @@ export class Orchestrator {
         speech =
           'I can help with lights, temperature and do not disturb right now. ' +
           'For anything else, shall I connect you to the front desk?';
-        root.setAll({ degraded_reason: 'llm_unavailable' });
+        root.setAll({ degraded_reason: 'llm_unavailable', llm_error: err.message });
+        // Log it. Degrading gracefully for the guest is correct; degrading SILENTLY for the
+        // operator is not — without this, "why is it always in degraded mode" has no answer
+        // anywhere in the logs.
+        console.error(`[llm] unavailable, degrading turn ${ctx.turnId}: ${err.message}`);
       } else {
         throw err;
       }
@@ -345,6 +383,9 @@ export class Orchestrator {
     const record = recorder.seal(totalMs);
     await this.audit.write(record);
 
+    // Serialised AFTER root.end() so every span has a duration.
+    const pipeline = serialiseSpans(tracer);
+
     await this.deps.bus.publish(
       makeEvent(
         EventType.TurnCompleted,
@@ -379,6 +420,20 @@ export class Orchestrator {
       costUsd,
       totalMs,
       tracer,
+      pipeline,
+      vendorCalls: [],
+      guardrails: reportGuardrails({
+        spans: pipeline,
+        calls,
+        toolsOffered: tools.length,
+        toolsTotal: TOOLS.length,
+        transcriptRedactions: forAudit.found,
+        outputViolations: guarded.violations,
+        lane,
+        degradationLevel,
+      }),
+      reasoning: record.reasoningSummary,
+      transcript: forModel.text,
     };
   }
 
@@ -516,26 +571,37 @@ function describeFrozenOrder(
  * Templated confirmation — avoids a second LLM pass on the common case, saving ~300ms (§27 step 8).
  * Wording is tied to the verified outcome, so "done" can only be said when it is observed done.
  */
-function templatedConfirmation(call: ExecutedCall): string {
+export function templatedConfirmation(call: ExecutedCall): string {
   const value = call.result?.value as
     | { status?: string; observed?: { value?: unknown }; checkoutAt?: string }
     | undefined;
   const pending = value?.status === 'pending';
   const observed = value?.observed?.value;
 
+  // When the outcome is pending, `observed` is the value the room STILL holds — the change did
+  // not take. Phrasing it as the new state is a false confirmation, and quoting it back
+  // ("I've asked for 19.5 degrees") is worse than saying nothing, because the guest asked for
+  // 26. Anything pending therefore describes the REQUEST, never the reading.
+  const soon = "I've asked for that — give it a moment.";
+
   switch (call.tool) {
     case 'lighting.set':
-      return pending ? "I've asked for that — give it a moment." : 'Done.';
+      return pending ? soon : 'Done.';
     case 'climate.set_temperature':
-      return pending
-        ? `I've asked for ${observed} degrees — it'll take a moment.`
+      if (pending) return `I've asked for ${call.args.targetC} degrees — it'll take a moment.`;
+      // An adapter that returns no reading leaves nothing truthful to quote. Interpolating it
+      // anyway produces "I've set it to undefined degrees" in a guest bedroom.
+      return observed == null
+        ? 'Done.'
         : `I've set it to ${observed} degrees.`;
     case 'curtains.set':
+      if (pending) return soon;
       return Number(observed ?? 0) > 50 ? 'Curtains open.' : 'Curtains closed.';
     case 'dnd.set':
+      if (pending) return soon;
       return observed === 'off' ? 'Do not disturb is off.' : 'Do not disturb is on.';
     case 'tv.control':
-      return 'Done.';
+      return pending ? soon : 'Done.';
     case 'stay.get_info':
       return value?.checkoutAt ? `Checkout is at ${value.checkoutAt}.` : 'Here you go.';
     case 'staff.connect':

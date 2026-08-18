@@ -84,6 +84,11 @@ export class InMemoryCatalogRepository implements CatalogRepository {
   async getDevice(id: string) {
     return this.devices.get(id);
   }
+
+  /** Admin listing only. Never used on a turn — resolution is always keyed by device id. */
+  async allDevices(): Promise<DeviceRecord[]> {
+    return [...this.devices.values()];
+  }
   async listRooms(propertyId: string) {
     return [...this.rooms.values()].filter((r) => r.propertyId === propertyId);
   }

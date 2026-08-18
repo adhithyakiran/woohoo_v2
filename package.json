@@ -20,16 +20,17 @@
     "eval": "tsx eval/runner/cli.ts",
     "turn": "tsx tools/device-simulator/src/cli.ts",
     "gateway": "tsx services/device-gateway/src/main.ts",
-    "edge": "tsx services/edge-gateway/src/main.ts"
+    "edge": "tsx services/edge-gateway/src/main.ts",
+    "mock-honeywell": "tsx services/mock-honeywell/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   }

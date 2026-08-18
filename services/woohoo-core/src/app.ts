@@ -9,6 +9,9 @@ import {
 } from '@woohoo/contracts';
 import { PolicyDecisionPoint, type PolicyInputs } from '@woohoo/policy';
 import { SimulatorAdapter } from '@woohoo/adapter-simulator';
+import { HttpCatalogRepository } from './modules/catalog-http.js';
+import { HoneywellHttpAdapter } from '@woohoo/adapter-honeywell';
+import type { AutomationAdapter } from '@woohoo/contracts';
 import { AgentRuntime } from './agent/runtime.js';
 import { GeminiProvider, type LlmProvider } from './agent/llm.js';
 import { MockLlmProvider } from './agent/mock-provider.js';
@@ -44,6 +47,8 @@ import { seedDemoProperty } from './seed.js';
 export interface App {
   orchestrator: Orchestrator;
   catalog: CatalogService;
+  /** Exposed so the control plane can provision rooms. Never touched on a turn. */
+  catalogRepo: CatalogRepository;
   deviceState: DeviceStateService;
   serviceRequests: ServiceRequestService;
   fnb: FnbService;
@@ -55,15 +60,27 @@ export interface App {
   bus: InProcessEventBus;
   audit: InMemoryAuditSink;
   sessions: SessionStore;
-  adapter: SimulatorAdapter;
+  adapter: AutomationAdapter;
   llm: LlmProvider;
 }
 
 export interface BuildOptions {
   llm?: LlmProvider;
   catalogRepo?: CatalogRepository;
-  adapter?: SimulatorAdapter;
+  adapter?: AutomationAdapter;
   seed?: boolean;
+}
+
+/**
+ * Pick the automation adapter from configuration.
+ *
+ * Defaulting to the simulator keeps the platform runnable with no head-end present; a hotel
+ * deployment sets WOOHOO_ADAPTER=honeywell and HONEYWELL_URL.
+ */
+function createAdapter(): AutomationAdapter {
+  const kind = (process.env.WOOHOO_ADAPTER ?? '').trim().toLowerCase();
+  if (kind === 'honeywell') return new HoneywellHttpAdapter();
+  return new SimulatorAdapter({ latencyMs: 60, seed: 42 });
 }
 
 export async function buildApp(opts: BuildOptions = {}): Promise<App> {
@@ -71,11 +88,19 @@ export async function buildApp(opts: BuildOptions = {}): Promise<App> {
   const audit = new InMemoryAuditSink();
   const sessions = new SessionStore();
 
-  const catalogRepo = opts.catalogRepo ?? new InMemoryCatalogRepository();
+  // WOOHOO_CATALOG_URL hands ownership of rooms and devices to another service; without it
+  // the in-memory catalog keeps the stack runnable with no external dependency.
+  const catalogRepo =
+    opts.catalogRepo ??
+    (process.env.WOOHOO_CATALOG_URL?.trim()
+      ? new HttpCatalogRepository()
+      : new InMemoryCatalogRepository());
   const catalog = new CatalogService(catalogRepo);
 
-  const adapter = opts.adapter ?? new SimulatorAdapter({ latencyMs: 60, seed: 42 });
-  await adapter.connect({ propertyId: 'p_blr_whitefield', vendor: 'simulator' });
+  // WOOHOO_ADAPTER=honeywell points the platform at a real head-end over HTTP. The in-process
+  // simulator stays the default so tests and a bare `npm run gateway` need no extra service.
+  const adapter = opts.adapter ?? createAdapter();
+  await adapter.connect({ propertyId: 'p_blr_whitefield', vendor: adapter.vendor });
   const deviceState = new DeviceStateService(adapter);
 
   const serviceRequests = new ServiceRequestService(new InMemoryServiceRequestRepository(), bus);
@@ -132,7 +157,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<App> {
   });
 
   return {
-    orchestrator, catalog, deviceState, serviceRequests, fnb, guest, knowledge,
+    orchestrator, catalog, catalogRepo, deviceState, serviceRequests, fnb, guest, knowledge,
     notifications, gateway, pdp, bus, audit, sessions, adapter, llm,
   };
 }

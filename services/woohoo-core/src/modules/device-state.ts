@@ -202,6 +202,17 @@ export class DeviceStateService {
           const observed = states.find(
             (s) => s.capability === op.capability && (op.zone === undefined || s.zone === op.zone),
           );
+          // The adapter has already compared its own read-back against what was asked for,
+          // and it is the only layer that knows about legitimate degradation (a binary
+          // curtain motor cannot hold 50%). If it says the change did not take, a second
+          // agreeing read does not make it true — both reads see the same stale value.
+          //
+          // Comparing the re-read against result.observed ALONE was the original bug: it
+          // confirmed the head-end was self-consistent, which it always is, and reported a
+          // silent failure to the guest as "I've set it to 19.5 degrees".
+          if (result.status !== 'applied') {
+            return { status: 'pending', observed: observed ?? result.observed };
+          }
           if (observed && String(observed.value) === String(result.observed?.value)) {
             return { status: 'applied', observed };
           }

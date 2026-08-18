@@ -84,7 +84,10 @@ export class AgentRuntime {
     const assembled = assembleContext(input);
     recorder.setContext(String(assembled.estimatedTokens), assembled.promptVersion, this.deps.llm.model);
 
-    let toolResults: Array<{ tool: string; ok: boolean; content: string }> | undefined;
+    // The full call/result history for this turn. The model's own proposals must be replayed
+    // back to it alongside their results, or it cannot tell what it has already done and
+    // re-proposes the same actions every round.
+    const rounds: NonNullable<Parameters<typeof this.deps.llm.generate>[0]['rounds']> = [];
 
     for (let round = 0; round < LOOP_LIMITS.maxRounds; round++) {
       if (Date.now() > deadline) break;
@@ -101,7 +104,7 @@ export class AgentRuntime {
           system: assembled.system,
           user: assembled.user,
           tools: input.tools,
-          toolResults,
+          rounds,
           maxOutputTokens: LOOP_LIMITS.maxOutputTokens,
           thinkingBudget: LOOP_LIMITS.thinkingBudget,
           temperature: 0.2,
@@ -131,11 +134,15 @@ export class AgentRuntime {
       if (!response.toolCalls.length) break;
 
       const results: Array<{ tool: string; ok: boolean; content: string }> = [];
+      // Only the calls we actually ran. Every functionCall replayed to the model must have a
+      // matching functionResponse, so a call dropped at the budget ceiling is dropped from both.
+      const attempted: typeof response.toolCalls = [];
 
       for (const call of response.toolCalls) {
         if (executed.length >= LOOP_LIMITS.maxToolCalls) break;
         const outcome = await this.executeOne({ tool: call.tool, args: call.args }, input);
         executed.push(outcome);
+        attempted.push(call);
 
         if (outcome.verdict.kind === 'ESCALATE') escalated = true;
         if (outcome.verdict.kind === 'CONFIRM') {
@@ -157,7 +164,7 @@ export class AgentRuntime {
         });
       }
 
-      toolResults = results;
+      rounds.push({ calls: attempted, results });
 
       // A confirmation request or an escalation ends the turn here: the guest must answer, or
       // a human must act. Continuing to reason past either is how agents talk themselves into

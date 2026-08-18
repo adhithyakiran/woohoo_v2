@@ -23,13 +23,51 @@ services:
       REDIS_URL: redis://redis:6379
       NATS_URL: nats://nats:4222
       # Absent by default: the runtime falls back to the deterministic mock provider so the
-      # whole stack works with no credentials. Set to enable the real model.
+      # whole stack works with no credentials. Set any of these in .env to use the real model.
+      #
+      # Both naming conventions are forwarded. Forwarding only one of them produced a
+      # confusing failure: the key was present in .env, compose silently substituted an
+      # empty string, and the service started on the mock with no error to chase.
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-}"
+      GEMINI_TIMEOUT: "${GEMINI_TIMEOUT:-}"
+      WOOHOO_LLM_MODEL: "${WOOHOO_LLM_MODEL:-}"
+      # Drive the room through a real HTTP head-end rather than the in-process simulator.
+      # Set WOOHOO_ADAPTER= (empty) to fall back to the simulator with no head-end running.
+      WOOHOO_ADAPTER: "${WOOHOO_ADAPTER:-honeywell}"
+      HONEYWELL_URL: "http://mock-honeywell:8091"
+      # Guards /v1/admin/rooms. Left unset the service generates one at startup and prints it,
+      # so the endpoint is never silently open on an instance reachable from the internet.
+      WOOHOO_ADMIN_TOKEN: "${WOOHOO_ADMIN_TOKEN:-}"
+      # Point rooms and devices at another team database. Unset uses the built-in catalog.
+      WOOHOO_CATALOG_URL: "${WOOHOO_CATALOG_URL:-}"
     ports:
       - "8443:8443"
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
+      mock-honeywell: { condition: service_started }
+    restart: unless-stopped
+
+  # Stands in for the property controller (INNCOM/Interel). Models what actually goes wrong
+  # in hotels: object addressing that is not the room number, variable latency, and writes
+  # that acknowledge but never take effect. Set MOCK_SILENT_FAILURE_RATE to rehearse that one.
+  mock-honeywell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: mock-honeywell
+    command: ["npm", "run", "mock-honeywell"]
+    environment:
+      PORT: "8091"
+      MOCK_LATENCY_MS: "${MOCK_LATENCY_MS:-120}"
+      MOCK_FAILURE_RATE: "${MOCK_FAILURE_RATE:-0}"
+      MOCK_SILENT_FAILURE_RATE: "${MOCK_SILENT_FAILURE_RATE:-0}"
+      MOCK_DRIFT_RATE: "${MOCK_DRIFT_RATE:-0}"
+    ports:
+      - "8091:8091"
     restart: unless-stopped
 
   edge-gateway:
