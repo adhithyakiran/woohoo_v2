@@ -1,0 +1,14 @@
+{
+  "name": "@woohoo/room-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fire the room-automation commands held in the local masterdb copy",
+  "scripts": {
+    "head-end": "node src/head-end.js",
+    "start": "node src/cli.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

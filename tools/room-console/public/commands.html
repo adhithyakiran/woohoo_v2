@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>api commands</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔌</text></svg>" />
+    <script>
+      try { document.documentElement.dataset.theme = localStorage.getItem('woohoo-console-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">api commands</span>
+      </div>
+      <nav class="topnav">
+        <a href="/">Control</a>
+        <a href="/devices">Rooms &amp; devices</a>
+        <a href="/commands" class="here">API commands</a>
+        <a href="/agent">Agent activity</a>
+      </nav>
+      <div class="topbar-right" id="topbar-right">
+        <span class="pill" id="total-pill">…</span>
+      </div>
+    </header>
+
+    <div class="filters">
+      <input id="q" class="input grow" type="search" placeholder="Search item, state, url, vendor, room, hotel…" />
+      <select id="property" class="select"><option value="">All properties</option></select>
+      <select id="vendor" class="select"><option value="">All vendors</option></select>
+      <label class="check"><input type="checkbox" id="inert" /> only health-check commands</label>
+      <select id="limit" class="select">
+        <option value="100">100</option>
+        <option value="200" selected>200</option>
+        <option value="500">500</option>
+      </select>
+    </div>
+
+    <main class="commands-layout">
+      <div class="grid-wrap" id="table"></div>
+      <aside class="detail" id="detail">
+        <p class="empty">Click a row to see the exact request that would be sent.</p>
+      </aside>
+    </main>
+
+    <div class="pager" id="pager"></div>
+    <div class="toasts" id="toasts"></div>
+    <script type="module" src="/commands.js"></script>
+  </body>
+</html>

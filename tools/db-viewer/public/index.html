@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>woohoo db viewer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗄️</text></svg>" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">db viewer</span>
+      </div>
+
+      <div class="conn-switch" id="conn-switch">
+        <button class="conn active" data-conn="source">
+          <span class="conn-label">Remote</span>
+          <span class="conn-detail" id="conn-source-detail">connecting…</span>
+        </button>
+        <button class="conn" data-conn="local">
+          <span class="conn-label">Local copy</span>
+          <span class="conn-detail" id="conn-local-detail">not checked</span>
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <span class="server-info" id="server-info"></span>
+        <button class="btn primary" id="open-replicate">Replicate to local</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <select id="schema-select" class="select" aria-label="Schema"></select>
+          <input id="table-filter" class="input" type="search" placeholder="Filter tables…" />
+        </div>
+        <div class="table-list" id="table-list"></div>
+        <div class="sidebar-foot" id="sidebar-foot"></div>
+      </aside>
+
+      <section class="content">
+        <div class="content-head">
+          <div>
+            <h1 id="relation-name">Select a table</h1>
+            <p class="muted" id="relation-meta"></p>
+          </div>
+          <nav class="tabs" id="tabs" hidden>
+            <button class="tab active" data-tab="data">Data</button>
+            <button class="tab" data-tab="structure">Structure</button>
+            <button class="tab" data-tab="relations">Relations</button>
+            <button class="tab" data-tab="sql">SQL</button>
+          </nav>
+        </div>
+
+        <div class="panel" id="panel-data">
+          <div class="toolbar">
+            <input id="row-search" class="input grow" type="search" placeholder="Search all columns…" />
+            <select id="page-size" class="select">
+              <option value="25">25 rows</option>
+              <option value="50" selected>50 rows</option>
+              <option value="100">100 rows</option>
+              <option value="250">250 rows</option>
+              <option value="500">500 rows</option>
+            </select>
+            <label class="check"><input type="checkbox" id="exact-count" /> exact count</label>
+            <button class="btn" id="add-filter">+ Filter</button>
+            <button class="btn" id="refresh-rows">Refresh</button>
+            <a class="btn" id="export-csv" download>Export CSV</a>
+          </div>
+          <div class="filters" id="filters"></div>
+          <div class="grid-wrap" id="grid-wrap"></div>
+          <div class="pager" id="pager"></div>
+        </div>
+
+        <div class="panel" id="panel-structure" hidden></div>
+        <div class="panel" id="panel-relations" hidden></div>
+
+        <div class="panel" id="panel-sql" hidden>
+          <div class="sql-editor">
+            <textarea id="sql-input" spellcheck="false" placeholder="select * from users limit 20"></textarea>
+            <div class="sql-actions">
+              <button class="btn primary" id="run-sql">Run <kbd>Ctrl</kbd>+<kbd>Enter</kbd></button>
+              <span class="muted" id="sql-status">Read-only. Statements run inside a READ ONLY transaction.</span>
+            </div>
+          </div>
+          <div class="grid-wrap" id="sql-results"></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="drawer" id="cell-drawer" hidden>
+      <div class="drawer-head">
+        <span id="cell-drawer-title">value</span>
+        <div>
+          <button class="btn small" id="cell-copy">Copy</button>
+          <button class="btn small" id="cell-close">Close</button>
+        </div>
+      </div>
+      <pre id="cell-drawer-body"></pre>
+    </div>
+
+    <div class="modal-backdrop" id="replicate-modal" hidden>
+      <div class="modal">
+        <header class="modal-head">
+          <h2>Replicate to local</h2>
+          <button class="btn small" id="close-replicate">Close</button>
+        </header>
+
+        <div class="modal-body" id="replicate-setup">
+          <section class="card">
+            <div class="card-head">
+              <h3>1 · Local target</h3>
+              <span class="pill" id="target-pill">unchecked</span>
+            </div>
+            <div class="docker-row" id="docker-row"></div>
+            <div class="field-grid">
+              <label>Host<input class="input" id="t-host" /></label>
+              <label>Port<input class="input" id="t-port" type="number" /></label>
+              <label>Database<input class="input" id="t-database" /></label>
+              <label>User<input class="input" id="t-user" /></label>
+              <label>Password<input class="input" id="t-password" type="password" placeholder="unchanged" /></label>
+            </div>
+            <div class="row-actions">
+              <button class="btn" id="test-target">Test connection</button>
+              <span class="muted" id="target-status"></span>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h3>2 · What to copy</h3>
+              <span class="pill" id="scope-pill"></span>
+            </div>
+            <div class="field-grid">
+              <label>Mode
+                <select class="select" id="r-mode">
+                  <option value="full">Schema and data</option>
+                  <option value="schema-only">Schema only</option>
+                  <option value="data-only">Data only (schema exists)</option>
+                </select>
+              </label>
+              <label>Rows per table
+                <select class="select" id="r-rowlimit">
+                  <option value="">Everything</option>
+                  <option value="1000">First 1,000</option>
+                  <option value="10000">First 10,000</option>
+                  <option value="100000">First 100,000</option>
+                </select>
+              </label>
+            </div>
+            <div class="opts">
+              <label class="check"><input type="checkbox" id="r-createdb" checked /> Create the database if it is missing</label>
+              <label class="check"><input type="checkbox" id="r-drop" checked /> Drop the target schema first</label>
+              <label class="check"><input type="checkbox" id="r-views" checked /> Recreate views</label>
+            </div>
+            <div class="table-picker">
+              <div class="picker-head">
+                <input class="input grow" id="picker-filter" type="search" placeholder="Filter…" />
+                <button class="btn small" id="pick-all">All</button>
+                <button class="btn small" id="pick-none">None</button>
+              </div>
+              <div class="picker-list" id="picker-list"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="modal-body" id="replicate-progress" hidden>
+          <section class="card">
+            <div class="card-head">
+              <h3 id="job-phase">Starting…</h3>
+              <span class="pill" id="job-pill">running</span>
+            </div>
+            <div class="bar"><div class="bar-fill" id="job-bar"></div></div>
+            <p class="muted" id="job-totals"></p>
+            <div class="job-tables" id="job-tables"></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><h3>Log</h3></div>
+            <div class="joblog" id="job-log"></div>
+          </section>
+        </div>
+
+        <footer class="modal-foot">
+          <span class="muted" id="replicate-hint">The remote database is only ever read.</span>
+          <div class="row-actions">
+            <button class="btn" id="cancel-job" hidden>Cancel</button>
+            <button class="btn" id="browse-local" hidden>Browse the local copy</button>
+            <button class="btn primary" id="start-replicate">Start replication</button>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

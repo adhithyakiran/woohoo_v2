@@ -1,0 +1,13 @@
+{
+  "name": "@woohoo/adapter-masterdb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AutomationAdapter backed by the V1 roomAutomationServices catalogue",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@woohoo/contracts": "*",
+    "pg": "^8.13.1",
+    "@woohoo/otel": "*"
+  }
+}

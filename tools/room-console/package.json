@@ -1,0 +1,13 @@
+{
+  "name": "@woohoo/room-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser console for driving imported V1 rooms - capabilities and raw commands",
+  "dependencies": {
+    "@woohoo/adapter-masterdb": "*",
+    "@woohoo/contracts": "*",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

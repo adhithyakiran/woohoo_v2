@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>woohoo room console</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>💡</text></svg>" />
+    <script>
+      try { document.documentElement.dataset.theme = localStorage.getItem('woohoo-console-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">room console</span>
+      </div>
+      <select id="property-select" class="select" aria-label="Property"></select>
+      <nav class="topnav">
+        <a href="/" class="here">Control</a>
+        <a href="/devices">Rooms &amp; devices</a>
+        <a href="/commands">API commands</a>
+        <a href="/agent">Agent activity</a>
+      </nav>
+      <div class="topbar-right" id="topbar-right">
+        <span class="pill" id="head-end-pill">head-end …</span>
+        <a class="btn" href="http://127.0.0.1:4180" target="_blank" rel="noopener">DB viewer</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="seg" id="side-mode">
+            <button class="seg-btn active" data-mode="rooms">Rooms</button>
+            <button class="seg-btn" data-mode="devices">Devices</button>
+          </div>
+          <input id="room-filter" class="input" type="search" placeholder="Filter…" />
+          <label class="check"><input type="checkbox" id="only-controllable" checked /> only ones that can do something</label>
+        </div>
+        <div class="room-list" id="room-list"></div>
+        <div class="sidebar-foot" id="sidebar-foot"></div>
+      </aside>
+
+      <section class="content">
+        <div class="content-head">
+          <div>
+            <h1 id="room-title">Pick a room</h1>
+            <p class="muted" id="room-meta"></p>
+          </div>
+          <nav class="tabs" id="tabs" hidden>
+            <button class="tab active" data-tab="capabilities">Capabilities</button>
+            <button class="tab" data-tab="commands">Raw commands</button>
+          </nav>
+        </div>
+
+        <div class="panel" id="panel-capabilities">
+          <div class="scroll" id="controls"></div>
+        </div>
+
+        <div class="panel" id="panel-commands" hidden>
+          <div class="scroll" id="commands"></div>
+        </div>
+      </section>
+
+      <aside class="wire">
+        <div class="wire-head">
+          <h3>What crossed the wire</h3>
+          <button class="btn small" id="clear-wire">Clear</button>
+        </div>
+        <div class="wire-log" id="wire-log">
+          <p class="empty">Press a control. Every request and reply lands here.</p>
+        </div>
+      </aside>
+    </main>
+
+    <div class="toasts" id="toasts"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

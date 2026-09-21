@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent activity</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🛰️</text></svg>" />
+    <script>
+      try { document.documentElement.dataset.theme = localStorage.getItem('woohoo-console-theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">agent activity</span>
+      </div>
+      <nav class="topnav">
+        <a href="/">Control</a>
+        <a href="/devices">Rooms &amp; devices</a>
+        <a href="/commands">API commands</a>
+        <a href="/agent" class="here">Agent activity</a>
+      </nav>
+      <div class="topbar-right" id="topbar-right">
+        <span class="pill" id="feed-pill">connecting…</span>
+        <button class="btn small" id="clear">Clear</button>
+      </div>
+    </header>
+
+    <div class="filters">
+      <span class="muted">Every turn the agent handles, with the exact API requests it caused.
+        Send one from the <a href="http://localhost:8443" target="_blank" rel="noopener">test console</a>
+        or the <a href="/">control page</a> and it appears here.</span>
+    </div>
+
+    <main class="agent-layout">
+      <div class="turn-list" id="turns">
+        <p class="empty">Waiting for a turn…</p>
+      </div>
+      <aside class="detail" id="detail">
+        <p class="empty">Click a turn to see everything it did.</p>
+      </aside>
+    </main>
+
+    <script type="module" src="/agent.js"></script>
+  </body>
+</html>

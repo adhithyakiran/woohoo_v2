@@ -11,6 +11,7 @@ import { PolicyDecisionPoint, type PolicyInputs } from '@woohoo/policy';
 import { SimulatorAdapter } from '@woohoo/adapter-simulator';
 import { HttpCatalogRepository } from './modules/catalog-http.js';
 import { HoneywellHttpAdapter } from '@woohoo/adapter-honeywell';
+import { MasterDbAdapter } from '@woohoo/adapter-masterdb';
 import type { AutomationAdapter } from '@woohoo/contracts';
 import { AgentRuntime } from './agent/runtime.js';
 import { GeminiProvider, type LlmProvider } from './agent/llm.js';
@@ -22,7 +23,7 @@ import {
   InMemoryCatalogRepository,
   type CatalogRepository,
 } from './modules/catalog.js';
-import { DeviceStateService } from './modules/device-state.js';
+import { DeviceStateService, type ApplyOutcome } from './modules/device-state.js';
 import { FnbService, InMemoryFnbRepository } from './modules/fnb.js';
 import { GuestService, InMemoryGuestRepository } from './modules/guest.js';
 import { InMemoryKnowledgeRepository, KnowledgeService } from './modules/knowledge.js';
@@ -80,7 +81,70 @@ export interface BuildOptions {
 function createAdapter(): AutomationAdapter {
   const kind = (process.env.WOOHOO_ADAPTER ?? '').trim().toLowerCase();
   if (kind === 'honeywell') return new HoneywellHttpAdapter();
+  // Drives a property imported from V1: the command catalogue is the protocol.
+  if (kind === 'masterdb') return new MasterDbAdapter();
   return new SimulatorAdapter({ latencyMs: 60, seed: 42 });
+}
+
+/**
+ * Seed the catalogue from V1. `WOOHOO_SEED_PROPERTY` takes one id, a comma-separated list,
+ * or `all` for every property that has automation.
+ *
+ * Warnings are printed rather than swallowed: a room whose commands point at a health check
+ * will accept instructions and change nothing, and that is worth knowing at boot rather than
+ * from a guest. With many properties the per-room detail would bury the startup log, so it
+ * is summarised and the full text stays available from `npm run capability -- import`.
+ */
+async function seedImportedProperty(catalogRepo: CatalogRepository, spec: string) {
+  const { importProperty, propertiesWithAutomation } = await import('@woohoo/adapter-masterdb');
+
+  const ids =
+    spec.trim().toLowerCase() === 'all'
+      ? await propertiesWithAutomation()
+      : spec
+          .split(',')
+          .map((part) => Number(part.trim()))
+          .filter((n) => Number.isFinite(n));
+
+  let rooms = 0;
+  let devices = 0;
+  let warnings = 0;
+  const verbose = ids.length === 1;
+
+  for (const id of ids) {
+    let imported;
+    try {
+      imported = await importProperty(id);
+    } catch (err) {
+      // One unimportable property must not stop the rest of the estate from loading.
+      console.warn(`  skipped property ${id}: ${(err as Error).message}`);
+      continue;
+    }
+
+    await catalogRepo.upsertProperty(imported.property);
+    for (const room of imported.rooms) await catalogRepo.upsertRoom(room);
+    for (const device of imported.devices) await catalogRepo.upsertDevice(device);
+
+    rooms += imported.rooms.length;
+    devices += imported.devices.length;
+    warnings += imported.warnings.length;
+
+    if (verbose) {
+      console.log(
+        `seeded ${imported.property.name} (${imported.property.propertyId}) - ` +
+          `${imported.rooms.length} rooms, ${imported.devices.length} devices, ` +
+          `${imported.property.roomTypes.length} room types`,
+      );
+      for (const w of imported.warnings) console.warn(`  warning: ${w}`);
+    }
+  }
+
+  if (!verbose) {
+    console.log(
+      `seeded ${ids.length} properties - ${rooms} rooms, ${devices} devices, ` +
+        `${warnings} onboarding warnings (npm run capability -- import --property <id> for detail)`,
+    );
+  }
 }
 
 export async function buildApp(opts: BuildOptions = {}): Promise<App> {
@@ -114,7 +178,15 @@ export async function buildApp(opts: BuildOptions = {}): Promise<App> {
   const pdp = new PolicyDecisionPoint();
 
   if (opts.seed !== false) {
-    await seedDemoProperty({ catalogRepo, fnbRepo, guestRepo, knowledgeRepo });
+    // WOOHOO_SEED_PROPERTY=167 (or 167,153 or all) boots against real V1 properties instead
+    // of the fixture: their rooms, their devices, and manifests derived from the commands
+    // each room actually has.
+    const imported = process.env.WOOHOO_SEED_PROPERTY?.trim();
+    if (imported) {
+      await seedImportedProperty(catalogRepo, imported);
+    } else {
+      await seedDemoProperty({ catalogRepo, fnbRepo, guestRepo, knowledgeRepo });
+    }
   }
 
   // The LLM is configuration: the real provider activates when a key is present, otherwise the
@@ -232,10 +304,20 @@ function buildHandlers(d: HandlerDeps): Map<string, ToolHandler> {
     });
   });
 
+  /**
+   * An ApplyOutcome carries its ToolError nested, and `isToolError` tests for a flat one -
+   * so returning the outcome as-is makes the gateway record ok:true for a command the room
+   * rejected, and the guest is told "Done." about a light that never moved. Unwrap it here,
+   * at the one boundary where a handler hands its result to the gateway.
+   */
+  const settle = (outcome: ApplyOutcome) =>
+    outcome.status === 'failed' && outcome.error ? outcome.error : outcome;
+
   const applyCapability = (capability: string, extract: (args: Record<string, unknown>) => unknown) =>
     (async (call: ScopedToolCall, ctx: TurnContext) => {
       const r = await resolve(ctx);
-      return d.deviceState.apply(
+      return settle(
+        await d.deviceState.apply(
         r.vendorRoom,
         {
           capability,
@@ -243,20 +325,23 @@ function buildHandlers(d: HandlerDeps): Map<string, ToolHandler> {
           value: extract(call.args) as never,
         },
         call.idempotencyKey,
+        ),
       );
     }) as ToolHandler;
 
   h.set('lighting.set', async (call, ctx) => {
     const r = await resolve(ctx);
     const hasBrightness = call.args.brightness !== undefined;
-    return d.deviceState.apply(
-      r.vendorRoom,
-      {
-        capability: hasBrightness ? 'lighting.brightness' : 'lighting.on_off',
-        zone: call.args.zone as never,
-        value: (hasBrightness ? call.args.brightness : call.args.on) as never,
-      },
-      call.idempotencyKey,
+    return settle(
+      await d.deviceState.apply(
+        r.vendorRoom,
+        {
+          capability: hasBrightness ? 'lighting.brightness' : 'lighting.on_off',
+          zone: call.args.zone as never,
+          value: (hasBrightness ? call.args.brightness : call.args.on) as never,
+        },
+        call.idempotencyKey,
+      ),
     );
   });
 

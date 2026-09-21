@@ -1,0 +1,16 @@
+{
+  "name": "@woohoo/db-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browse a remote Postgres and replicate it to a local one",
+  "bin": { "db-viewer": "src/main.js" },
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1",
+    "pg-copy-streams": "^6.0.6"
+  }
+}

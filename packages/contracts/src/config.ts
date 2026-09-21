@@ -83,7 +83,12 @@ export const PropertyConfigSchema = z.object({
   defaultLanguage: z.string(),
   brand: BrandSchema.default({}),
   automation: z.object({
-    vendor: z.enum(['inncom', 'interel', 'bacnet', 'knx', 'lutron', 'simulator']),
+    /**
+     * `masterdb` is not a protocol: it names the V1 command catalogue as the source of
+     * truth, which is how an imported property whose rooms mix vendors - schneider in one,
+     * interel in the next - is expressible at all. Every other value is a single protocol.
+     */
+    vendor: z.enum(['inncom', 'interel', 'bacnet', 'knx', 'lutron', 'simulator', 'masterdb']),
     /** Vendor room reference is NOT the hotel room number (§39.2). */
     roomRefMapping: z.string().default('vendor_room_id'),
   }),

@@ -21,10 +21,18 @@
     "turn": "tsx tools/device-simulator/src/cli.ts",
     "gateway": "tsx services/device-gateway/src/main.ts",
     "edge": "tsx services/edge-gateway/src/main.ts",
-    "mock-honeywell": "tsx services/mock-honeywell/src/main.ts"
+    "mock-honeywell": "tsx services/mock-honeywell/src/main.ts",
+    "db-viewer": "node tools/db-viewer/src/main.js",
+    "room": "node tools/room-runner/src/cli.js",
+    "head-end": "node tools/room-runner/src/head-end.js",
+    "capability": "tsx services/adapter-masterdb/src/cli.ts",
+    "room-console": "tsx tools/room-console/src/server.ts",
+    "archive-origins": "node tools/db-viewer/src/archive-origins.js"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

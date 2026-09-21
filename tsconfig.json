@@ -25,6 +25,7 @@
       "@woohoo/core": ["services/woohoo-core/src/index.ts"],
       "@woohoo/core/*": ["services/woohoo-core/src/*"],
       "@woohoo/adapter-simulator": ["services/adapter-simulator/src/index.ts"],
+      "@woohoo/adapter-masterdb": ["services/adapter-masterdb/src/index.ts"],
       "@woohoo/edge-gateway": ["services/edge-gateway/src/index.ts"],
       "@woohoo/device-gateway": ["services/device-gateway/src/index.ts"]
     }

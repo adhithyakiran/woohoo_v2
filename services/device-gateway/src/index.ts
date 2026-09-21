@@ -241,6 +241,128 @@ export class DeviceGateway {
       return;
     }
 
+    // The devices actually loaded, so the console reflects the property in front of it
+    // rather than a fixture. An imported V1 property has none of the demo's device ids.
+    if (req.method === 'GET' && url.pathname === '/v1/devices') {
+      const repo = this.opts.app.catalogRepo as {
+        allDevices?: () => Promise<Array<{ deviceId: string; roomId: string; revoked: boolean }>>;
+      };
+      if (typeof repo.allDevices !== 'function') {
+        return json(200, { devices: [], reason: 'catalog does not support listing' });
+      }
+      const devices = await repo.allDevices();
+      const listed = await Promise.all(
+        devices.map(async (d) => {
+          const room = await this.opts.app.catalogRepo.getRoom(d.roomId);
+          const property = room ? await this.opts.app.catalogRepo.getProperty(room.propertyId) : undefined;
+          return {
+            deviceId: d.deviceId,
+            roomId: d.roomId,
+            roomNumber: room?.roomNumber ?? '?',
+            roomTypeId: room?.roomTypeId ?? '?',
+            vendorRoomId: room?.vendorRoomId ?? null,
+            propertyId: room?.propertyId ?? '?',
+            propertyName: property?.name ?? room?.propertyId ?? '?',
+            revoked: d.revoked,
+          };
+        }),
+      );
+      listed.sort(
+        (a, b) =>
+          a.propertyName.localeCompare(b.propertyName) ||
+          a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }),
+      );
+      return json(200, { devices: listed });
+    }
+
+    // What is physically in the selected room, and every endpoint each device answers on.
+    // The console cannot show this without asking the adapter: the catalogue holds the
+    // devices, and only the adapter knows how a capability maps onto them.
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/rooms/') && url.pathname.endsWith('/devices')) {
+      const deviceId = decodeURIComponent(url.pathname.slice('/v1/rooms/'.length, -'/devices'.length));
+      const device = await this.opts.app.catalogRepo.getDevice(deviceId);
+      if (!device) return json(404, { error: 'NOT_FOUND', detail: 'No such device.' });
+      const room = await this.opts.app.catalogRepo.getRoom(device.roomId);
+      if (!room) return json(404, { error: 'NOT_FOUND', detail: 'Device is bound to no room.' });
+
+      const adapter = this.opts.app.adapter as {
+        originsFor?: (ids: number[]) => Promise<Map<number, { apiUrl: string; apiMethod: string | null; host: string | null; headerNames: string[] }>>;
+        mappingFor?: (r: { vendorRoomId: string; propertyId: string }) => Promise<{
+          commands: Array<{
+            capability: string;
+            zone?: string;
+            item: string;
+            value: unknown;
+            row: { id: number; stateName: string; apiMethod: string | null; apiUrl: string | null; apiBody: unknown; serviceName: string; stateType: string };
+          }>;
+          unmapped: Array<{ reason: string; row: { id: number; itemName: string; stateName: string } }>;
+        }>;
+      };
+      if (typeof adapter.mappingFor !== 'function') {
+        return json(200, { room, devices: [], reason: 'this adapter does not expose a room catalogue' });
+      }
+
+      const mapping = await adapter.mappingFor({
+        vendorRoomId: room.vendorRoomId,
+        propertyId: room.propertyId,
+      });
+
+      const origins =
+        typeof adapter.originsFor === 'function'
+          ? await adapter.originsFor(mapping.commands.map((c) => c.row.id))
+          : new Map();
+
+      const byItem = new Map<string, {
+        item: string;
+        zone: string | null;
+        capability: string | null;
+        kind: string;
+        vendors: string[];
+        inert: number;
+        endpoints: Array<{ id: number; state: string; value: unknown; method: string | null; url: string | null; body: unknown; inert: boolean; origin: { apiUrl: string; apiMethod: string | null; host: string | null; headerNames: string[] } | null }>;
+      }>();
+
+      for (const c of mapping.commands) {
+        if (!byItem.has(c.item)) {
+          byItem.set(c.item, {
+            item: c.item,
+            zone: c.zone ?? null,
+            capability: c.capability,
+            kind: c.row.stateType,
+            vendors: [],
+            inert: 0,
+            endpoints: [],
+          });
+        }
+        const entry = byItem.get(c.item)!;
+        if (!entry.vendors.includes(c.row.serviceName)) entry.vendors.push(c.row.serviceName);
+        const inert = /\/v\d+\/ping$/.test(c.row.apiUrl ?? '');
+        if (inert) entry.inert += 1;
+        entry.endpoints.push({
+          id: c.row.id,
+          state: c.row.stateName,
+          value: c.value,
+          method: c.row.apiMethod,
+          url: c.row.apiUrl,
+          body: c.row.apiBody,
+          inert,
+          origin: origins.get(c.row.id) ?? null,
+        });
+      }
+
+      return json(200, {
+        room,
+        deviceId,
+        devices: [...byItem.values()].sort((a, b) => a.item.localeCompare(b.item)),
+        unmapped: mapping.unmapped.map((u) => ({
+          id: u.row.id,
+          item: u.row.itemName,
+          state: u.row.stateName,
+          reason: u.reason,
+        })),
+      });
+    }
+
     // Live turn feed. Lets the console show turns that originated anywhere — a curl from a
     // terminal, the Android app, another service — without polling.
     if (req.method === 'GET' && url.pathname === '/v1/events') {

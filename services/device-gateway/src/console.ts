@@ -17,12 +17,49 @@ export const CONSOLE_HTML = String.raw`<!DOCTYPE html>
 <title>Woohoo Test Console</title>
 <style>
 :root{
+  --bg:#f6f7f9; --panel:#ffffff; --panel2:#f1f3f6; --line:#dde1e7; --line2:#c9d0da;
+  --ink:#1b2027; --dim:#5b6672; --faint:#8b95a1;
+  --accent:#a16207; --info:#2563eb; --ok:#147d4b; --deny:#b42318; --warn:#8a5a00;
+  --esc:#7c3aed; --violet:#7c3aed; --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+}
+:root[data-theme="dark"]{
   --bg:#0b0f14; --panel:#111823; --panel2:#0e141d; --line:#1e2836; --line2:#28364a;
   --ink:#e6edf5; --dim:#93a3b8; --faint:#5f7183;
   --accent:#e8b339; --info:#4aa3f0; --ok:#41c98a; --deny:#f0656f; --warn:#e8a33d;
-  --esc:#c77dff; --violet:#a78bfa; --mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+  --esc:#c77dff; --violet:#a78bfa;
 }
 *{box-sizing:border-box}
+.themebtn{background:var(--panel);border:1px solid var(--line2);color:var(--dim);border-radius:7px;padding:4px 10px;font:12px "Segoe UI",system-ui,sans-serif;cursor:pointer}
+.themebtn:hover{color:var(--ink);border-color:var(--faint)}
+.zone{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--panel2)}
+.zone h4{margin:0 0 8px;font-size:12px;text-transform:capitalize;color:var(--ink)}
+.devgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:10px}
+.dev{border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:10px}
+.dev.inert{border-color:var(--warn)}
+.dev .h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.dev .h b{font-size:13px}
+.dev table{width:100%;border-collapse:collapse;font:11px var(--mono);margin-top:6px}
+.dev td{padding:3px 6px;border-top:1px solid var(--line);vertical-align:top}
+.dev tr.ping td{color:var(--warn)}
+.dev tr.eprow{cursor:pointer}
+.dev tr.eprow:hover td{background:var(--panel2)}
+.dev tr.eprow.open td{background:var(--panel2);font-weight:600}
+.dev tr.epbody{display:none}
+.dev tr.epbody.on{display:table-row}
+.dev tr.epbody pre.orig{border-color:var(--line2);color:var(--ink)}
+.dev tr.epbody pre{margin:3px 0 0;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);white-space:pre-wrap;word-break:break-all;color:var(--dim)}
+.ep{color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+.dev table{table-layout:fixed}
+.dev td:nth-child(1){width:44px}
+.dev td:nth-child(2){width:34%}
+.dev td:nth-child(3){width:22%}
+.dev td:nth-child(4){width:44px}
+.vc{border:1px solid var(--line);border-radius:9px;background:var(--panel);margin-bottom:8px;overflow:hidden}
+.vc .vh{display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;flex-wrap:wrap;background:var(--panel2)}
+.vc .vb{padding:10px;border-top:1px solid var(--line);display:none}
+.vc.open .vb{display:block}
+.vc pre{margin:5px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);font:11px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all;color:var(--dim)}
+.vc .lbl{font:600 10px "Segoe UI",system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:9px}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;overflow:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -159,6 +196,7 @@ h4:first-child{margin-top:0}
     <div class="stat"><i class="livedot" id="fd"></i><span id="ft">feed</span></div>
     <div class="stat" id="ep0"></div>
     <div class="sp"></div>
+    <button class="themebtn" id="themebtn">Dark</button>
     <button class="btn" id="clear">Clear</button>
   </div>
 
@@ -202,6 +240,7 @@ h4:first-child{margin-top:0}
           <button data-p="tools">Tools</button>
           <button data-p="guard">Guardrails</button>
           <button data-p="room">Room API</button>
+          <button data-p="devices">Devices</button>
           <button data-p="wire">Wire</button>
           <button data-p="connect">Connect</button>
           <button data-p="rooms">Rooms</button>
@@ -211,6 +250,7 @@ h4:first-child{margin-top:0}
         <div class="pane" id="p-tools"><div id="tools"></div></div>
         <div class="pane" id="p-guard"><div id="guard"></div></div>
         <div class="pane" id="p-room"><div id="room"></div></div>
+        <div class="pane" id="p-devices"><div id="devices"></div></div>
         <div class="pane" id="p-wire"><div id="wire"></div></div>
         <div class="pane" id="p-rooms"><div id="rooms"></div></div>
         <div class="pane" id="p-connect"><div class="hostbar">Target host <input id="chost" spellcheck="false"><button class="btn" id="ctest">Test reachability</button><span id="cres" class="hb"></span><span class="hb">Page served from <b id="curhost"></b>. Put in the address the other person will use, then test it from here.</span></div><div id="connect"></div></div>
@@ -227,7 +267,7 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>]/g, c=>({'&':'&amp;',
 function jn(v){ return typeof v === 'object' ? JSON.stringify(v) : String(v); }
 
 // ── tabs ───────────────────────────────────────────────────────────────────
-const PANES = ['timeline','agent','tools','guard','room','wire','connect','rooms'];
+const PANES = ['timeline','agent','tools','guard','room','devices','wire','connect','rooms'];
 document.querySelectorAll('#tabs button').forEach(b => {
   b.onclick = () => {
     document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
@@ -461,29 +501,180 @@ function renderRoom(vs){
   if (!vs.length) {
     $('#room').innerHTML = '<p class="note">No room-automation calls on this turn. Either nothing'
       + ' physical was changed, or the platform is running the in-process simulator'
-      + ' (set WOOHOO_ADAPTER=honeywell to talk to a head-end over HTTP).</p>';
+      + ' (set WOOHOO_ADAPTER=masterdb or honeywell to talk to a head-end over HTTP).</p>';
     return;
   }
+  // One card per call: a summary line that opens to the request exactly as sent.
   $('#room').innerHTML =
-    '<p class="note">Calls to the property head-end. Objects are addressed by vendor id, never by'
-    + ' hotel room number. "Observed" is what the controller reported back after the write -'
-    + ' when it differs from "requested", the write was acknowledged but did not take effect.</p>'
-    + '<table><tr><th>Method</th><th>Object</th><th>Capability</th><th>Zone</th>'
-    + '<th>Requested</th><th>Observed</th><th>Status</th><th>Time</th></tr>'
-    + vs.map(v => {
-        const mismatch = v.requested !== undefined && v.observed !== undefined
-                       && String(v.requested) !== String(v.observed);
-        return '<tr><td class="y">' + esc(v.method) + '</td><td>' + esc(v.objectId || '-') + '</td>'
-          + '<td class="m">' + esc(v.capability || '-') + '</td><td class="f">' + esc(v.zone || '-') + '</td>'
-          + '<td>' + esc(v.requested === undefined ? '-' : jn(v.requested)) + '</td>'
-          + '<td class="' + (mismatch ? 'r' : 'g') + '">' + esc(v.observed === undefined ? '-' : jn(v.observed)) + '</td>'
-          + '<td class="' + (v.ok ? 'g' : 'r') + '">' + esc(v.status) + '</td>'
-          + '<td>' + v.ms + 'ms</td></tr>'
-          + (v.note ? '<tr><td></td><td colspan="7" class="y">' + esc(v.note) + '</td></tr>' : '');
-      }).join('')
-    + '</table>'
-    + '<p class="note" style="margin-top:12px">URL of the first call: <span class="m">'
-    + esc(vs[0].url) + '</span></p>';
+    '<p class="note">Every request this turn sent to the property head-end. Objects are addressed'
+    + ' by vendor id, never by hotel room number. Click a call for the exact body and reply.</p>'
+    + vs.map(function(v, i){
+        // Only a real disagreement counts. An object requested against a JSON-string reply
+        // always differs under String(), which cried wolf on every single call.
+        var comparable = v.requested !== undefined && v.observed !== undefined
+                       && typeof v.requested !== 'object' && typeof v.observed !== 'object';
+        var mismatch = comparable && String(v.requested) !== String(v.observed);
+        var inert = /health-check/.test(v.note || '');
+        return '<div class="vc" data-vc="' + i + '">'
+          + '<div class="vh">'
+            + '<span class="y">' + esc(v.method) + '</span>'
+            + '<span class="m" style="flex:1;word-break:break-all">' + esc(v.url) + '</span>'
+            + '<span class="' + (v.ok ? 'g' : 'r') + '">' + esc(v.status) + '</span>'
+            + '<span class="dim">' + v.ms + 'ms</span>'
+            + (inert ? '<span class="y">controls nothing</span>' : '')
+          + '</div>'
+          + '<div class="vb">'
+            + (inert ? '<p class="note">This endpoint is a health check. It answered 200 and changed nothing in the room.</p>' : '')
+            + '<table><tr><th>Object</th><th>Capability</th><th>Zone</th><th>Vendor</th><th>Source</th></tr>'
+            + '<tr><td class="y">' + esc(v.objectId || '-') + '</td>'
+            + '<td class="m">' + esc(v.capability || '-') + '</td>'
+            + '<td class="f">' + esc(v.zone || '-') + '</td>'
+            + '<td>' + esc(v.vendor || '-') + '</td>'
+            + '<td>' + esc(v.note || '-') + '</td></tr></table>'
+            + '<div class="lbl">request body</div><pre>'
+            + esc(v.requested === undefined ? '(none)' : jn(v.requested)) + '</pre>'
+            + '<div class="lbl">response' + (mismatch ? ' - differs from what was requested' : '') + '</div>'
+            + '<pre class="' + (mismatch ? 'r' : '') + '">'
+            + esc(v.observed === undefined ? '(none)' : jn(v.observed)) + '</pre>'
+          + '</div></div>';
+      }).join('');
+
+  var cards = document.querySelectorAll('#room .vc');
+  for (var i = 0; i < cards.length; i++) {
+    (function(card){
+      card.querySelector('.vh').onclick = function(){ card.classList.toggle('open'); };
+    })(cards[i]);
+  }
+  if (cards.length === 1) cards[0].classList.add('open');
+}
+
+// ── devices in the selected room ────────────────────────
+
+var devicesFor = null;
+
+function pathOnly(url){
+  if (!url) return '-';
+  try { return new URL(url).pathname; } catch (e) { return url; }
+}
+
+function renderDevices(data, err){
+  if (err) { $('#devices').innerHTML = '<p class="note r">' + esc(err) + '</p>'; return; }
+  if (!data) { $('#devices').innerHTML = '<p class="note">Loading the room...</p>'; return; }
+
+  var devs = data.devices || [];
+  setCount('devices', devs.length);
+  if (!devs.length) {
+    $('#devices').innerHTML = '<p class="note">'
+      + esc(data.reason || 'This room has no automation devices.') + '</p>';
+    return;
+  }
+
+  // Grouped by the zone each device sits in, so the pane reads like the room.
+  var zones = {};
+  var order = [];
+  for (var i = 0; i < devs.length; i++) {
+    var key = devs[i].zone || 'whole room';
+    if (!zones[key]) { zones[key] = []; order.push(key); }
+    zones[key].push(devs[i]);
+  }
+  order.sort(function(a, b){
+    if (a === 'whole room') return 1;
+    if (b === 'whole room') return -1;
+    return a < b ? -1 : 1;
+  });
+
+  var html = '<p class="note">Room ' + esc(data.room.roomNumber) + ' - '
+    + esc(data.room.roomTypeId) + ' - vendor room ' + esc(data.room.vendorRoomId)
+    + '. Every device the agent can drive, and the endpoint behind each state.</p>';
+
+  for (var z = 0; z < order.length; z++) {
+    var items = zones[order[z]];
+    var dead = 0;
+    for (var d = 0; d < items.length; d++) {
+      if (items[d].inert === items[d].endpoints.length) dead++;
+    }
+    html += '<div class="zone"><h4>' + esc(order[z]) + ' <span class="dim">'
+      + items.length + ' device' + (items.length === 1 ? '' : 's')
+      + (dead ? ' - ' + dead + ' inert' : '') + '</span></h4><div class="devgrid">';
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      var allDead = it.inert === it.endpoints.length;
+      html += '<div class="dev' + (allDead ? ' inert' : '') + '">'
+        + '<div class="h"><b>' + esc(it.item) + '</b>'
+        + '<span class="dim">' + esc(it.kind) + ' - ' + esc((it.vendors || []).join(', ')) + '</span>'
+        + '<span class="chip"><b>' + esc(it.capability || '-') + '</b></span></div>'
+        + (allDead ? '<p class="note">Every endpoint here is a health check - it answers 200 and controls nothing.</p>' : '')
+        + '<table>';
+      for (var e = 0; e < it.endpoints.length; e++) {
+        var ep = it.endpoints[e];
+        var epid = 'ep-' + it.item.replace(/[^a-zA-Z0-9]/g, '') + '-' + ep.id;
+        var curl = 'curl -i -X ' + (ep.method || 'GET') + " '" + (ep.url || '') + "'"
+          + " \\\n  -H 'content-type: application/json'"
+          + (ep.body ? " \\\n  -d '" + JSON.stringify(ep.body) + "'" : '');
+        html += '<tr class="eprow ' + (ep.inert ? 'ping' : '') + '" data-ep="' + epid + '">'
+          + '<td class="dim">' + ep.id + '</td>'
+          + '<td>' + esc(ep.state) + '</td>'
+          + '<td class="f">' + esc(ep.value === null ? 'takes a value' : String(ep.value)) + '</td>'
+          + '<td class="y">' + esc(ep.method || '') + '</td>'
+          + '<td class="ep">' + esc(pathOnly(ep.url)) + '</td></tr>'
+          + '<tr class="epbody" id="' + epid + '"><td colspan="5">'
+          + '<div class="lbl">sent locally</div><pre>' + esc((ep.method || 'GET') + ' ' + (ep.url || '-')) + '</pre>'
+          + (ep.origin
+              ? '<div class="lbl">in production - what this really calls in the hotel</div>'
+                + '<pre class="orig">' + esc((ep.origin.apiMethod || 'GET') + ' ' + ep.origin.apiUrl)
+                + (ep.origin.headerNames && ep.origin.headerNames.length
+                    ? '\n\nheaders: ' + esc(ep.origin.headerNames.join(', '))
+                      + '  (values withheld - real credentials)'
+                    : '')
+                + '</pre>'
+              : '<div class="lbl">in production</div><pre>not archived - run npm run archive-origins</pre>')
+          + '<div class="lbl">request body</div><pre>'
+          + esc(ep.body === null || ep.body === undefined ? '(none)' : JSON.stringify(ep.body, null, 2)) + '</pre>'
+          + '<div class="lbl">as curl</div><pre>' + esc(curl) + '</pre>'
+          + '</td></tr>';
+      }
+      html += '</table></div>';
+    }
+    html += '</div></div>';
+  }
+
+  var un = data.unmapped || [];
+  if (un.length) {
+    html += '<p class="note">Not addressable by the agent: '
+      + un.map(function(u){ return esc(u.item + ' / ' + u.state); }).join(', ') + '.</p>';
+  }
+  $('#devices').innerHTML = html;
+
+  // Each endpoint row opens to the request it would send. Delegated once, here, because
+  // the pane is rebuilt whenever the room changes.
+  var rows = document.querySelectorAll('#devices tr.eprow');
+  for (var q = 0; q < rows.length; q++) {
+    (function(tr){
+      tr.onclick = function(){
+        var body = document.getElementById(tr.getAttribute('data-ep'));
+        if (!body) return;
+        var open = body.classList.contains('on');
+        body.classList.toggle('on', !open);
+        tr.classList.toggle('open', !open);
+      };
+    })(rows[q]);
+  }
+}
+
+async function loadDevicesForRoom(force){
+  var deviceId = $('#dev').value;
+  if (!deviceId) return;
+  if (!force && devicesFor === deviceId) return;
+  devicesFor = deviceId;
+  renderDevices(null, '');
+  try {
+    var r = await fetch('/v1/rooms/' + encodeURIComponent(deviceId) + '/devices');
+    var j = await r.json();
+    if (!r.ok) { renderDevices(null, j.detail || j.error || 'Could not load the room.'); return; }
+    renderDevices(j, '');
+  } catch (e) {
+    renderDevices(null, 'Could not reach the gateway: ' + e);
+  }
 }
 
 // ── connect pane ───────────────────────────────────────────────────────────
@@ -941,6 +1132,70 @@ function renderRooms(data, err){
 renderRooms(null, '');
 
 renderConnect();
+
+// The console defaults to light; the choice is remembered per browser.
+(function(){
+  var KEY = 'woohoo-console-theme';
+  function get(){ try { return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; } }
+  function set(t){
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem(KEY, t); } catch (e) {}
+    var b = $('#themebtn');
+    if (b) b.textContent = t === 'dark' ? 'Light' : 'Dark';
+  }
+  set(get());
+  var btn = $('#themebtn');
+  if (btn) btn.onclick = function(){ set(get() === 'dark' ? 'light' : 'dark'); };
+})();
+
+renderDevices(null, '');
+$('#dev').addEventListener('change', function(){ loadDevicesForRoom(true); });
+setTimeout(function(){ loadDevicesForRoom(true); }, 400);
+
+
+// The device list belongs to whatever property the gateway loaded, not to this file.
+// An imported V1 property has none of the demo ids, so a hardcoded list points the
+// console at rooms that do not exist and every turn fails with 'unknown device'.
+async function loadDevices() {
+  try {
+    const r = await fetch('/v1/devices');
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.devices || !j.devices.length) return;
+    const sel = $('#dev');
+    const previous = sel.value;
+    sel.innerHTML = '';
+    // Grouped by property: a whole estate is hundreds of rooms in one flat list otherwise.
+    const groups = new Map();
+    for (const d of j.devices) {
+      const key = d.propertyName || 'devices';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(d);
+    }
+    const many = groups.size > 1;
+    for (const [name, devices] of groups) {
+      let parent = sel;
+      if (many) {
+        parent = document.createElement('optgroup');
+        parent.label = name + ' (' + devices.length + ')';
+        sel.appendChild(parent);
+      }
+      for (const d of devices) {
+        const o = document.createElement('option');
+        o.value = d.deviceId;
+        o.textContent = 'room ' + d.roomNumber + ' - ' + d.roomTypeId
+          + (d.vendorRoomId ? ' (vendor ' + d.vendorRoomId + ')' : '')
+          + (d.revoked ? ' [REVOKED]' : '');
+        parent.appendChild(o);
+      }
+    }
+    if (j.devices.some(function(d){ return d.deviceId === previous; })) sel.value = previous;
+  } catch (e) {
+    // Leave the markup's fallback options in place.
+  }
+}
+
+loadDevices();
 </script>
 </body>
 </html>`;
