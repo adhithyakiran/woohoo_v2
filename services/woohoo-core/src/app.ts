@@ -17,6 +17,8 @@ import { AgentRuntime } from './agent/runtime.js';
 import { GeminiProvider, type LlmProvider } from './agent/llm.js';
 import { MockLlmProvider } from './agent/mock-provider.js';
 import { InProcessEventBus } from './infra/event-bus.js';
+import { EventJournal } from './infra/event-journal.js';
+import { CheckoutService } from './modules/checkout.js';
 import { InMemoryAuditSink } from './modules/audit.js';
 import {
   CatalogService,
@@ -59,6 +61,10 @@ export interface App {
   gateway: McpGateway;
   pdp: PolicyDecisionPoint;
   bus: InProcessEventBus;
+  /** Replayable sequence over `bus`, for external event consumers (review R7). */
+  eventJournal: EventJournal;
+  /** Stay teardown, driven by the PMS owner rather than discovered here (review R8). */
+  checkout: CheckoutService;
   audit: InMemoryAuditSink;
   sessions: SessionStore;
   adapter: AutomationAdapter;
@@ -149,6 +155,10 @@ async function seedImportedProperty(catalogRepo: CatalogRepository, spec: string
 
 export async function buildApp(opts: BuildOptions = {}): Promise<App> {
   const bus = new InProcessEventBus();
+  // Constructed before anything can publish, so the sequence has no hole at position 1.
+  const eventJournal = new EventJournal(bus, {
+    capacity: Number(process.env.WOOHOO_EVENT_JOURNAL_CAPACITY ?? 1_000),
+  });
   const audit = new InMemoryAuditSink();
   const sessions = new SessionStore();
 
@@ -172,6 +182,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<App> {
   const fnb = new FnbService(fnbRepo, bus);
   const guestRepo = new InMemoryGuestRepository();
   const guest = new GuestService(guestRepo);
+  const checkout = new CheckoutService({ guest, sessions, bus });
   const knowledgeRepo = new InMemoryKnowledgeRepository();
   const knowledge = new KnowledgeService(knowledgeRepo);
   const notifications = new NotificationService(bus);
@@ -230,7 +241,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<App> {
 
   return {
     orchestrator, catalog, catalogRepo, deviceState, serviceRequests, fnb, guest, knowledge,
-    notifications, gateway, pdp, bus, audit, sessions, adapter, llm,
+    notifications, gateway, pdp, bus, eventJournal, checkout, audit, sessions, adapter, llm,
   };
 }
 

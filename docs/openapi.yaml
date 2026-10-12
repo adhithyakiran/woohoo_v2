@@ -1,0 +1,1207 @@
+openapi: 3.1.0
+
+info:
+  title: Woohoo V2 agentic platform
+  version: 1.0.0
+  description: |
+    Two API surfaces in one document, because the question that blocks integration is which
+    of them you implement and which you call.
+
+    **Tag `gateway`** - implemented BY the agentic system, in `services/device-gateway`. The
+    Android hub calls `/v1/turn`; the enterprise API calls the event and lifecycle endpoints.
+
+    **Tag `catalog`** - implemented BY whoever owns room and device configuration, normally
+    `woohoo-enterprise-api`. The agentic system is the CLIENT here. It is activated by setting
+    `WOOHOO_CATALOG_URL`, and the client lives in
+    `services/woohoo-core/src/modules/catalog-http.ts`. Until it is set, configuration is
+    served from an in-memory repository seeded at startup and nothing persists across a
+    restart.
+
+    Status markers used below:
+      - `implemented` - present in the source at the stated path, with tests.
+      - `needs decision` - the shape shown is a proposal, not something already built.
+
+    Known limits that are properties of this version rather than oversights:
+      - Operational records (service requests, orders, sessions, audit) are in-memory. The
+        catalog endpoints below cover configuration only.
+      - The event journal retains a bounded window in the process that produced it. Across
+        replicas or restarts, `missed` on replay is how a consumer learns it must reconcile.
+
+servers:
+  - url: http://localhost:8443
+    description: Local gateway (npm run gateway)
+  - url: https://gateway.{region}.woohoo.example
+    description: Deployment placeholder; topology is not yet decided
+    variables:
+      region:
+        default: in
+        enum: [in, eu, me, us, apac]
+
+tags:
+  - name: gateway
+    description: Exposed by the agentic system.
+  - name: catalog
+    description: Consumed by the agentic system; implement these to own configuration.
+  - name: events
+    description: Domain-event delivery to enterprise consumers.
+  - name: lifecycle
+    description: Stay lifecycle driven by the PMS owner.
+
+security: []
+
+paths:
+  # ───────────────────────────── gateway: voice path ─────────────────────────────
+  /v1/turn:
+    post:
+      tags: [gateway]
+      summary: Submit a transcript and receive speech plus what was actually done
+      description: |
+        `implemented` - `services/device-gateway/src/index.ts`.
+
+        The scope (tenant, property, room) is derived server-side from the device record. No
+        request field carries a room, and the agent cannot supply one.
+
+        Identity: when `WOOHOO_REQUIRE_DEVICE_AUTH` is set, a verified client-certificate
+        serial must arrive in `X-Client-Cert-Serial`, written by the TLS terminator. A
+        `deviceId` in the body is an addressing field, never proof of access. A serial that
+        disagrees with the device record is refused in both modes. `GET /health` reports
+        `deviceAuth: required | disabled`.
+      security:
+        - deviceCertificate: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceId, transcript]
+              properties:
+                deviceId:
+                  type: string
+                  description: Addressing only. Resolved to a scope, then verified.
+                  example: d_412a
+                transcript:
+                  type: string
+                  maxLength: 4000
+                  example: turn off the bedroom light
+                asrConfidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  default: 0.95
+            example:
+              deviceId: d_412a
+              transcript: turn off the bedroom light
+              asrConfidence: 0.97
+      responses:
+        '200':
+          description: The turn completed. Inspect `calls[].result.ok` before trusting speech.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: |
+            `DEVICE_UNVERIFIED`. Enforcement is on and no verified identity was presented.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: |
+            `CERTIFICATE_MISMATCH`. The presented or announced serial belongs to a different
+            device. Re-provision rather than retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: '`UNKNOWN_DEVICE`. Unknown, revoked, or bound to a room that is gone.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: Body above 16KB.
+        '500':
+          description: '`TURN_FAILED`.'
+
+  /v1/devices:
+    get:
+      tags: [gateway]
+      summary: Every configured device, for operator tooling
+      description: '`implemented`. Inspection surface, not a guest path.'
+      responses:
+        '200':
+          description: Devices with their room binding.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: '#/components/schemas/DeviceRecord' }
+
+  /v1/rooms/{deviceId}/devices:
+    get:
+      tags: [gateway]
+      summary: What this room can actually do
+      description: |
+        `implemented`. The resolved capability manifest for the room the device is bound to,
+        which is the authoritative answer to "will a light command work here".
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+          example: d_412a
+      responses:
+        '200':
+          description: Resolved room, manifest and per-capability availability.
+        '404':
+          description: Unknown device.
+
+  /health:
+    get:
+      tags: [gateway]
+      summary: Liveness plus the configuration that silently changes behaviour
+      description: |
+        `implemented`. `provider`/`model` reveal whether the real model is wired up,
+        `adapter` whether real hardware is being driven, `deviceAuth` whether identity is
+        enforced. All three look identical in logs when misconfigured, hence reporting them.
+      responses:
+        '200':
+          description: Service state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  connections: { type: integer }
+                  uptimeS: { type: integer }
+                  provider: { type: string, example: gemini }
+                  model: { type: string, example: gemini-2.0-flash }
+                  adapter: { type: string, example: masterdb }
+                  deviceAuth:
+                    type: string
+                    enum: [required, disabled]
+
+  # ───────────────────────────── gateway: events ─────────────────────────────
+  /v1/events:
+    get:
+      tags: [events]
+      summary: Live turn feed (console)
+      description: |
+        `implemented`. Server-sent events carrying `turn.received` and `turn.completed` only.
+
+        This is NOT the domain-event contract. It exists so an operator console can watch
+        turns arrive from any transport. It has no authentication, no replay and no event
+        ids, and it must not be used to drive business workflows. Use
+        `/v1/events/domain` for that.
+      responses:
+        '200':
+          description: 'SSE stream; `content-type: text/event-stream`.'
+
+  /v1/events/domain:
+    get:
+      tags: [events]
+      summary: Domain-event stream with resumable positions
+      description: |
+        `implemented` - review R7. Server-sent events, one frame per domain event:
+
+        ```
+        id: 412
+        event: woohoo.service_request.created
+        data: {"specversion":"1.0","type":"woohoo.service_request.created", ...}
+        ```
+
+        `id` is a monotonic sequence assigned at publication. A consumer stores it and
+        resumes with `Last-Event-ID` (sent automatically by `EventSource`) or `?since=`.
+
+        If the resume position has already been evicted from the retained window, the stream
+        emits a `woohoo.stream.gap` frame BEFORE any event, carrying how many were lost. A
+        consumer receiving it must reconcile against the authoritative store rather than
+        trust the stream. Silence would mean losing a guest's request while looking healthy.
+      security:
+        - eventToken: []
+      parameters:
+        - name: since
+          in: query
+          schema: { type: integer, minimum: 0 }
+          description: Resume after this sequence number. 0 or absent means "whatever is retained".
+        - name: tenantId
+          in: query
+          schema: { type: string }
+        - name: propertyId
+          in: query
+          schema: { type: string }
+          description: Scope to one property. Omitting it delivers every property.
+        - name: types
+          in: query
+          schema: { type: string }
+          description: Comma-separated event types.
+          example: woohoo.service_request.created,woohoo.fnb_order.placed
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: 'SSE stream; keepalive comment every 20s.'
+        '401':
+          description: Missing or wrong event token. The admin token is a different grant.
+
+  /v1/events/domain/replay:
+    get:
+      tags: [events]
+      summary: Pull-based replay, for consumers that would rather poll
+      description: |
+        `implemented` - review R7. The endpoint to call after a restart to find out what was
+        missed. `nextSince` is the last delivered sequence, not the newest, so a truncated
+        page resumes rather than skips.
+      security:
+        - eventToken: []
+      parameters:
+        - name: since
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: propertyId
+          in: query
+          schema: { type: string }
+        - name: tenantId
+          in: query
+          schema: { type: string }
+        - name: types
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of events plus the cursor to resume from.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, missed, latestSeq, nextSince, more]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      allOf:
+                        - type: object
+                          properties:
+                            seq: { type: integer }
+                        - $ref: '#/components/schemas/EventEnvelope'
+                  missed:
+                    type: integer
+                    description: >-
+                      Events after `since` that were evicted before delivery. Non-zero means
+                      reconcile; it cannot be recovered from this endpoint.
+                  latestSeq: { type: integer }
+                  oldestRetainedSeq: { type: integer }
+                  nextSince:
+                    type: integer
+                    description: Pass as `since` on the next call.
+                  more: { type: boolean }
+              example:
+                events:
+                  - seq: 412
+                    specversion: '1.0'
+                    type: woohoo.service_request.created
+                    source: woohoo-core/service-request
+                    id: evt_mv59u8i000m
+                    time: '2026-10-12T13:12:00.648Z'
+                    subject: r_412
+                    tenantId: t_demo
+                    propertyId: p_blr_whitefield
+                    traceId: turn_8f21c
+                    schemaVersion: '1.0'
+                    data:
+                      requestId: sr_7c21
+                      category: housekeeping
+                      subcategory: towels
+                      description: Two towels
+                      status: open
+                missed: 0
+                latestSeq: 412
+                oldestRetainedSeq: 1
+                nextSince: 412
+                more: false
+        '401':
+          description: Missing or wrong event token.
+
+  # ───────────────────────────── gateway: lifecycle ─────────────────────────────
+  /v1/admin/stays/checkout:
+    post:
+      tags: [lifecycle]
+      summary: Release a room at check-out
+      description: |
+        `implemented` - review R7, R8. Called by whoever owns the PMS integration, because
+        the agentic system cannot observe a check-out itself.
+
+        Purges stay-scoped guest data and the room's conversation state, then publishes
+        `woohoo.stay.checked_out`. Published after the purge, so a consumer seeing the event
+        knows the deletion already happened.
+
+        `discardedPendingConfirmation` matters operationally: a confirmation token surviving
+        check-out would let the next guest say "yes" to an order the previous one proposed.
+      security:
+        - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StayCheckout' }
+            examples:
+              byDevice:
+                summary: Preferred - the room binding is verified on resolve
+                value:
+                  deviceId: d_412a
+                  stayRef: stay_9f22
+                  checkedOutAt: '2026-10-12T11:02:00.000Z'
+              byRoom:
+                summary: For a room with no enrolled device
+                value:
+                  roomId: r_412
+                  propertyId: p_blr_whitefield
+                  tenantId: t_demo
+                  stayRef: stay_9f22
+      responses:
+        '200':
+          description: Purged.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roomId, stayRef, checkedOutAt, purged, discardedPendingConfirmation, eventId]
+                properties:
+                  roomId: { type: string }
+                  stayRef: { type: string }
+                  checkedOutAt: { type: string, format: date-time }
+                  purged:
+                    type: array
+                    items: { type: string }
+                  discardedPendingConfirmation: { type: boolean }
+                  eventId: { type: string }
+              example:
+                roomId: r_412
+                stayRef: stay_9f22
+                checkedOutAt: '2026-10-12T11:02:00.000Z'
+                purged:
+                  - stay
+                  - preferences:stay_scoped
+                  - session.history
+                  - session.pending_confirmation
+                  - session.last_entity
+                discardedPendingConfirmation: true
+                eventId: evt_mv59u8i000m
+        '400':
+          description: Body identifies no room.
+        '401':
+          description: Missing or wrong admin token.
+        '404':
+          description: '`ROOM_UNRESOLVED`.'
+
+  /v1/admin/rooms:
+    get:
+      tags: [gateway]
+      summary: List configured rooms
+      description: '`implemented`.'
+      security:
+        - adminToken: []
+      parameters:
+        - name: propertyId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Configured rooms.
+        '401':
+          description: Missing or wrong admin token.
+    post:
+      tags: [gateway]
+      summary: Provision a room and bind a device
+      description: |
+        `implemented`. Deliberately NOT on the agent's tool surface: anything the agent can
+        call is something it can be argued into calling, and "make a room with every
+        capability and bind my device" is exactly what an attacker would ask for.
+
+        Ids derive from the room number, so a repeat call updates rather than duplicates.
+
+        Note the response is WRAPPED as `{ "created": ... }` (review C3).
+      security:
+        - adminToken: []
+      parameters:
+        - name: propertyId
+          in: query
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoomProvision' }
+            example:
+              roomNumber: '412'
+              vendorRoomId: '2389'
+              capabilities:
+                - capability: lighting.on_off
+                  zones: [bedroom, living]
+                - capability: climate.setpoint
+                  minC: 18
+                  maxC: 26
+              zones: [bedroom, living, bathroom]
+      responses:
+        '201':
+          description: Created or updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [created]
+                properties:
+                  created: { $ref: '#/components/schemas/ProvisionedRoom' }
+              example:
+                created:
+                  roomId: r_412
+                  roomNumber: '412'
+                  vendorRoomId: '2389'
+                  roomTypeId: rt_412
+                  deviceId: d_412a
+                  propertyId: p_blr_whitefield
+                  capabilities: [lighting.on_off, climate.setpoint]
+        '400':
+          description: '`INVALID_ROOM`, with the failing field path.'
+        '401':
+          description: Missing or wrong admin token.
+        '405':
+          description: Use GET to list or POST to create.
+
+  # ───────────────── catalog: implemented BY enterprise, called BY agentic ─────────────────
+  /properties/{propertyId}:
+    get:
+      tags: [catalog]
+      summary: Property configuration
+      description: |
+        Called by `HttpCatalogRepository.getProperty`. Cached for
+        `WOOHOO_CATALOG_TTL_MS` (default 30000).
+
+        A 404 means "not configured" and is returned as absent. Every other status throws,
+        because treating an outage as "no such room" would revoke a working device mid-stay.
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/PropertyId'
+      responses:
+        '200':
+          description: The property configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyConfig' }
+        '404':
+          description: Not configured. Treated as absent, not as an error.
+    put:
+      tags: [catalog]
+      summary: Upsert property configuration
+      description: |
+        Called by `upsertProperty`. Any 2xx is success. The client clears its whole cache on
+        a successful write, so a read straight after a write is fresh **in that replica**.
+        Other replicas keep serving cached values until their TTL expires - see the caching
+        note in the integration document.
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/PropertyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PropertyConfig' }
+      responses:
+        '200':
+          description: Stored.
+        '204':
+          description: Stored.
+
+  /properties/{propertyId}/rooms:
+    get:
+      tags: [catalog]
+      summary: Rooms in a property
+      description: Called by `listRooms`. An absent body is treated as an empty list.
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/PropertyId'
+      responses:
+        '200':
+          description: Rooms.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RoomRecord' }
+
+  /rooms/{roomId}:
+    get:
+      tags: [catalog]
+      summary: One room
+      description: Called by `getRoom` during device resolution, on nearly every turn.
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '200':
+          description: The room.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoomRecord' }
+        '404':
+          description: Not configured.
+    put:
+      tags: [catalog]
+      summary: Upsert a room
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoomRecord' }
+      responses:
+        '200': { description: Stored. }
+        '204': { description: Stored. }
+
+  /devices/{deviceId}:
+    get:
+      tags: [catalog]
+      summary: One device
+      description: |
+        Called by `getDevice`. This record is what makes a device identity authoritative:
+        `certificateSerial` is compared against the verified client certificate, and
+        `revoked` is enforced on every turn, not only at connect.
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: The device.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceRecord' }
+        '404':
+          description: Not configured.
+    put:
+      tags: [catalog]
+      summary: Upsert a device
+      security:
+        - catalogToken: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRecord' }
+      responses:
+        '200': { description: Stored. }
+        '204': { description: Stored. }
+
+  /devices:
+    get:
+      tags: [catalog]
+      summary: All devices (optional)
+      description: |
+        Called by `allDevices`, for the operator console only. This is the eighth endpoint,
+        absent from the seven listed in the previous specification (review C3).
+
+        Optional: the client swallows every failure and returns an empty list, so not
+        implementing it costs detail in operator tooling and nothing on the guest path.
+      security:
+        - catalogToken: []
+      responses:
+        '200':
+          description: Devices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceRecord' }
+
+components:
+  securitySchemes:
+    deviceCertificate:
+      type: apiKey
+      in: header
+      name: X-Client-Cert-Serial
+      description: |
+        The serial of a client certificate ALREADY VERIFIED by the TLS terminator, which
+        writes this header. Header name is configurable via `WOOHOO_CLIENT_CERT_HEADER`.
+
+        This is an authorisation input, not the authentication itself: possession of the
+        private key is what the mTLS handshake proves. The terminator must strip any
+        client-supplied copy of this header, or the control is worthless.
+    adminToken:
+      type: apiKey
+      in: header
+      name: x-admin-token
+      description: |
+        Control-plane token. Generated at startup and printed if `WOOHOO_ADMIN_TOKEN` is
+        unset, rather than defaulting to open. Grants room provisioning and stay teardown.
+    eventToken:
+      type: http
+      scheme: bearer
+      description: |
+        Event-consumer token, `WOOHOO_EVENT_TOKEN`. Deliberately separate from the admin
+        token: an event consumer needs to read a property's business events and has no
+        business being able to rebind a device to a room.
+    catalogToken:
+      type: http
+      scheme: bearer
+      description: |
+        Sent by the agentic system to the catalog as `Authorization: Bearer`, from
+        `WOOHOO_CATALOG_TOKEN`. Enterprise defines and validates it.
+
+  parameters:
+    PropertyId:
+      name: propertyId
+      in: path
+      required: true
+      schema: { type: string }
+      example: p_blr_whitefield
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema: { type: string }
+      example: r_412
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema: { type: string }
+      example: d_412a
+
+  responses:
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, detail]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code. Branch on this, not on `detail`.
+          example: CERTIFICATE_MISMATCH
+        detail:
+          type: string
+          description: Human-readable, and subject to change.
+      example:
+        error: UNKNOWN_DEVICE
+        detail: Unknown device d_999
+
+    # ── configuration ──
+    Zone:
+      type: string
+      enum: [bedroom, living, bathroom, entrance]
+
+    CapabilityId:
+      type: string
+      description: The ten abstract capabilities. Vendor-neutral by design.
+      enum:
+        - lighting.on_off
+        - lighting.brightness
+        - lighting.scene
+        - climate.setpoint
+        - climate.mode
+        - curtains.position
+        - curtains.open_close
+        - dnd
+        - tv.power_volume_input
+        - media.playback
+
+    CapabilityGrant:
+      type: object
+      required: [capability]
+      properties:
+        capability: { $ref: '#/components/schemas/CapabilityId' }
+        zones:
+          type: array
+          items: { $ref: '#/components/schemas/Zone' }
+          description: >-
+            Zones this capability exists in. Absent means room-wide. A zoned request against
+            a room-wide grant is satisfied by the room-wide command.
+        minC:
+          type: number
+          description: Setpoint floor in degrees Celsius, surfaced to the model so it proposes a valid value first time.
+        maxC:
+          type: number
+          description: Setpoint ceiling in degrees Celsius.
+
+    CapabilityManifest:
+      type: object
+      required: [version, zones, capabilities]
+      description: |
+        Attaches to ROOM TYPE, not to a room, with per-room overrides that can only REMOVE
+        capabilities. Eight manifests per property is a day's work; three hundred is a project.
+      properties:
+        version: { type: string, example: '1.0' }
+        zones:
+          type: array
+          items: { $ref: '#/components/schemas/Zone' }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityGrant' }
+        scenes:
+          type: array
+          items: { type: string }
+          default: []
+          example: [movie, sleep, bright]
+
+    RoomType:
+      type: object
+      required: [id, capabilityManifest]
+      properties:
+        id: { type: string, example: rt_deluxe_king }
+        count: { type: integer, minimum: 0, default: 0 }
+        capabilityManifest: { $ref: '#/components/schemas/CapabilityManifest' }
+
+    RoomOverride:
+      type: object
+      required: [roomRef]
+      description: Can only remove capabilities, never add them.
+      properties:
+        roomRef: { type: string }
+        disable:
+          type: array
+          items: { type: string }
+          default: []
+        reason: { type: string }
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3, example: INR }
+
+    PropertyPolicy:
+      type: object
+      required: [climate, quietHours, spend, serviceRequests]
+      description: |
+        Evaluated by a deterministic policy decision point that never reads the prompt. These
+        are bounds the model cannot argue past, not hints.
+      properties:
+        climate:
+          type: object
+          properties:
+            minC: { type: number, default: 18 }
+            maxC: { type: number, default: 26 }
+            maxChangesPerHour: { type: integer, default: 6 }
+        quietHours:
+          type: object
+          properties:
+            start: { type: string, pattern: '^\d{2}:\d{2}$', default: '22:00' }
+            end: { type: string, pattern: '^\d{2}:\d{2}$', default: '07:00' }
+            deferNonUrgentDispatch:
+              type: boolean
+              default: true
+              description: Non-urgent maintenance raised at night is queued for morning, not suppressed.
+            suppressUnattendedActuation: { type: boolean, default: true }
+        spend:
+          type: object
+          required: [perStayCap, perOrderCap, confirmationRequiredAbove]
+          properties:
+            perStayCap: { $ref: '#/components/schemas/Money' }
+            perOrderCap: { $ref: '#/components/schemas/Money' }
+            confirmationRequiredAbove: { $ref: '#/components/schemas/Money' }
+        serviceRequests:
+          type: object
+          properties:
+            maxOpen: { type: integer, default: 10 }
+            maxOpenPerCategory: { type: integer, default: 3 }
+            slaMinutes:
+              type: object
+              additionalProperties: { type: integer }
+              default: {}
+        tierCeiling:
+          type: string
+          enum: [T0, T1, T2, T3, T4, T5]
+          default: T3
+          description: Kill switch. `T0` is read-only mode.
+        disabledTools:
+          type: array
+          items: { type: string }
+          default: []
+
+    PropertyConfig:
+      type: object
+      required: [propertyId, tenantId, name, languages, defaultLanguage, policy, escalation, roomTypes]
+      description: |
+        The artefact that makes onboarding a configuration exercise rather than an engineering
+        project. Authored at onboarding, versioned, and validated by the conformance suite
+        before go-live.
+      properties:
+        propertyId: { type: string, example: p_blr_whitefield }
+        tenantId: { type: string, example: t_demo }
+        name: { type: string }
+        cell:
+          type: string
+          enum: [in, eu, me, us, apac]
+          default: in
+        timezone: { type: string, default: Asia/Kolkata }
+        languages:
+          type: array
+          items: { type: string }
+          minItems: 1
+          example: [en-IN, hi-IN]
+        defaultLanguage: { type: string, example: en-IN }
+        brand:
+          type: object
+          properties:
+            voiceId: { type: string, default: mock-voice }
+            tone: { type: string, default: 'warm, concise, professional' }
+            assistantName: { type: string, default: Voice Genie }
+            wakeWordModel: { type: string, default: hello_voice_genie_v3 }
+        automation:
+          type: object
+          required: [vendor]
+          properties:
+            vendor:
+              type: string
+              enum: [inncom, interel, bacnet, knx, lutron, simulator, masterdb]
+              description: |
+                `masterdb` is not a protocol. It names the V1 command catalogue as the source
+                of truth, which is how an imported property whose rooms mix vendors is
+                expressible at all. Every other value is a single protocol.
+            roomRefMapping:
+              type: string
+              default: vendor_room_id
+              description: The vendor room reference is NOT the hotel room number.
+        pms:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [opera_cloud, mews, cloudbeds, none]
+              default: none
+            features:
+              type: array
+              items: { type: string }
+              default: []
+        policy: { $ref: '#/components/schemas/PropertyPolicy' }
+        escalation:
+          type: object
+          required: [frontDesk, dutyManager, emergencyNumberDisplay]
+          properties:
+            frontDesk:
+              type: object
+              required: [channel, target]
+              properties:
+                channel: { type: string }
+                target: { type: string }
+            dutyManager:
+              type: object
+              required: [channel, target]
+              properties:
+                channel: { type: string }
+                target: { type: string }
+            welfareProtocolRef: { type: string }
+            emergencyNumberDisplay:
+              type: string
+              description: Displayed and spoken, never dialled by the device.
+            crisisHelplineDisplay: { type: string }
+        roomTypes:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/RoomType' }
+        roomOverrides:
+          type: array
+          items: { $ref: '#/components/schemas/RoomOverride' }
+          default: []
+        asr:
+          type: object
+          properties:
+            primary: { type: string, default: mock }
+            fallback: { type: string, default: mock }
+        features:
+          type: object
+          properties:
+            fnbOrdering: { type: boolean, default: true }
+            geminiLiveChatLane: { type: boolean, default: false }
+            crossStayPreferences: { type: boolean, default: false }
+            personalisedGreeting: { type: boolean, default: false }
+        compliance:
+          type: object
+          required: [controller]
+          properties:
+            controller: { type: string }
+            transcriptRetentionDays:
+              type: integer
+              minimum: 1
+              maximum: 90
+              default: 30
+            noticeVersion: { type: string, default: v1 }
+
+    RoomRecord:
+      type: object
+      required: [roomId, propertyId, roomNumber, roomTypeId, vendorRoomId]
+      properties:
+        roomId: { type: string, example: r_412 }
+        propertyId: { type: string, example: p_blr_whitefield }
+        roomNumber:
+          type: string
+          description: The number a guest would say. Never used to address the vendor system.
+          example: '412'
+        roomTypeId: { type: string, example: rt_deluxe_king }
+        vendorRoomId:
+          type: string
+          description: >-
+            The vendor's own identifier, resolved at onboarding and verified. Assuming it
+            equals the room number is a classic onboarding bug whose symptom is actions
+            landing in a stranger's room.
+          example: '2389'
+
+    DeviceRecord:
+      type: object
+      required: [deviceId, tenantId, propertyId, roomId, boundAt, certificateSerial, revoked]
+      description: |
+        The voice device is a separate entity from the room, bound revocably. Collapsing them
+        is the V1 shortcut that makes a relocated device an invisible bug.
+      properties:
+        deviceId: { type: string, example: d_412a }
+        tenantId: { type: string, example: t_demo }
+        propertyId: { type: string, example: p_blr_whitefield }
+        roomId: { type: string, example: r_412 }
+        boundAt:
+          type: integer
+          format: int64
+          description: Epoch milliseconds. Timestamped so binding drift can be detected rather than assumed.
+        bindingVerifiedAt:
+          type: integer
+          format: int64
+          description: Last time the binding was confirmed against the automation system.
+        certificateSerial:
+          type: string
+          description: Compared against the verified client certificate on every turn.
+          example: cert_412a
+        revoked:
+          type: boolean
+          description: >-
+            Enforced on resolution, which happens on every turn, so revocation takes effect
+            within the resolution cache TTL rather than at next connect.
+
+    RoomProvision:
+      type: object
+      required: [roomNumber, vendorRoomId]
+      additionalProperties: false
+      description: Supply either `roomTypeId` or `capabilities`.
+      properties:
+        roomNumber: { type: string, minLength: 1 }
+        vendorRoomId: { type: string, minLength: 1 }
+        roomTypeId: { type: string, minLength: 1 }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityGrant' }
+        zones:
+          type: array
+          items: { $ref: '#/components/schemas/Zone' }
+        deviceId:
+          type: string
+          description: Generated from the room number when omitted.
+        propertyId: { type: string }
+
+    ProvisionedRoom:
+      type: object
+      required: [roomId, roomNumber, vendorRoomId, roomTypeId, deviceId, propertyId, capabilities]
+      properties:
+        roomId: { type: string }
+        roomNumber: { type: string }
+        vendorRoomId: { type: string }
+        roomTypeId: { type: string }
+        deviceId: { type: string }
+        propertyId: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+
+    StayCheckout:
+      type: object
+      description: Supply `deviceId`, or `roomId` with `propertyId` and `tenantId`.
+      properties:
+        deviceId: { type: string, minLength: 1 }
+        roomId: { type: string, minLength: 1 }
+        propertyId: { type: string, minLength: 1 }
+        tenantId: { type: string, minLength: 1 }
+        stayRef:
+          type: string
+          minLength: 1
+          description: Opaque stay token, for correlation with the enterprise record.
+        checkedOutAt:
+          type: string
+          format: date-time
+          description: From the PMS, if the check-out is being replayed after the fact.
+
+    # ── turn result ──
+    TurnResponse:
+      type: object
+      description: |
+        `speech` is what the guest hears. `calls[].result.ok` is whether anything actually
+        happened. They are separate for a reason: a confirmation phrased over a rejected
+        command is the failure mode this platform treats as most serious, so a consumer must
+        branch on `ok` rather than assume speech implies success.
+      properties:
+        kind: { type: string, example: turn.completed }
+        at: { type: string, format: date-time }
+        transport:
+          type: string
+          enum: [http, ws]
+        deviceId: { type: string }
+        turnId: { type: string, example: turn_8f21c }
+        transcript: { type: string }
+        speech: { type: string, example: I have asked for that - give it a moment. }
+        lane:
+          type: string
+          enum: [fast, agentic, clarify, confirm, degraded]
+        calls:
+          type: array
+          items:
+            type: object
+            properties:
+              tool: { type: string, example: lighting.set }
+              tier:
+                type: string
+                enum: [T0, T1, T2, T3, T4, T5]
+              verdict:
+                type: string
+                description: The policy decision, e.g. allow, deny, confirm.
+              result:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    description: Branch on this. False with speech present means the guest was told it did not happen.
+                  status:
+                    type: string
+                    enum: [accepted, pending, applied, failed, rejected]
+                    description: |
+                      `pending` means the controller accepted the write and physical state was
+                      not read back. It is not a weaker `applied`; it is the honest answer when
+                      the command catalogue has no read path.
+                  error:
+                    type: object
+                    properties:
+                      error: { type: string }
+                      message: { type: string }
+
+    # ── events ──
+    EventType:
+      type: string
+      description: |
+        Eleven declared types. Five are published today: `turn.completed`,
+        `service_request.created`, `service_request.updated`, `fnb_order.placed`,
+        `escalation.raised`, plus `stay.checked_out` via the check-out endpoint. The
+        remaining device and policy events are declared and not yet emitted.
+      enum:
+        - woohoo.turn.completed
+        - woohoo.service_request.created
+        - woohoo.service_request.updated
+        - woohoo.fnb_order.placed
+        - woohoo.device_state.changed
+        - woohoo.device.offline
+        - woohoo.device.online
+        - woohoo.policy.denied
+        - woohoo.escalation.raised
+        - woohoo.stay.checked_out
+        - woohoo.capability_manifest.updated
+
+    EventEnvelope:
+      type: object
+      required: [specversion, type, source, id, time, subject, tenantId, propertyId, traceId, schemaVersion, data]
+      description: |
+        CloudEvents 1.0 shaped. `tenantId` is present from the first version deliberately:
+        adding it later is a migration, and without it per-tenant filtering, cost attribution
+        and regional routing all become impossible to bolt on.
+
+        Deduplicate on `id`, order on the stream's `seq`, correlate to a turn on `traceId`.
+      properties:
+        specversion: { type: string, const: '1.0' }
+        type: { $ref: '#/components/schemas/EventType' }
+        source: { type: string, example: woohoo-core/service-request }
+        id:
+          type: string
+          description: Unique per event. The deduplication key.
+          example: evt_mv59u8i000m
+        time: { type: string, format: date-time }
+        subject:
+          type: string
+          description: The entity the event is about, usually the room id.
+        tenantId: { type: string }
+        propertyId: { type: string }
+        traceId:
+          type: string
+          description: The turn that caused this, or `checkout_<room>_<ts>` for a check-out.
+        schemaVersion: { type: string, example: '1.0' }
+        data:
+          description: Type-specific payload.
+          oneOf:
+            - $ref: '#/components/schemas/StayCheckedOutData'
+            - $ref: '#/components/schemas/EscalationRaisedData'
+            - $ref: '#/components/schemas/PolicyDeniedData'
+            - type: object
+
+    StayCheckedOutData:
+      type: object
+      required: [stayRef, roomRef, checkedOutAt, purge]
+      properties:
+        stayRef: { type: string }
+        roomRef: { type: string }
+        checkedOutAt: { type: string, format: date-time }
+        purge:
+          type: array
+          items: { type: string }
+          description: What was deleted. Drives downstream deletion, so this event must not be lost.
+
+    EscalationRaisedData:
+      type: object
+      required: [escalationId, roomRef, category, severity, trigger, notified, requiresAckWithinS]
+      properties:
+        escalationId: { type: string }
+        roomRef: { type: string }
+        category:
+          type: string
+          enum: [medical, fire, security, welfare, other]
+        severity:
+          type: string
+          enum: [critical, high, normal]
+        trigger: { type: string }
+        contextSummary: { type: string }
+        notified:
+          type: array
+          items: { type: string }
+        requiresAckWithinS: { type: integer }
+
+    PolicyDeniedData:
+      type: object
+      required: [turnId, tool, tier, ruleId, verdict, reason, utteranceHash]
+      properties:
+        turnId: { type: string }
+        tool: { type: string }
+        tier:
+          type: string
+          enum: [T0, T1, T2, T3, T4, T5]
+        ruleId: { type: string }
+        verdict: { type: string }
+        reason: { type: string }
+        utteranceHash:
+          type: string
+          description: A hash, never the utterance. This event feeds security monitoring, not analytics.

@@ -2,13 +2,20 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { App, TurnResponse } from '@woohoo/core';
+import type { EventType } from '@woohoo/contracts';
 import {
   listConfigured,
   provisionRoom,
   ProvisioningError,
   RoomProvisionSchema,
+  StayCheckoutSchema,
 } from '@woohoo/core';
 import { CONSOLE_HTML } from './console.js';
+import {
+  identityOptionsFromEnv,
+  verifyDeviceIdentity,
+  type DeviceIdentityOptions,
+} from './device-identity.js';
 
 /**
  * Device Gateway — architecture doc §8 ①, §10.3, §19.
@@ -49,8 +56,37 @@ export function adminToken(): string {
   return ADMIN_TOKEN;
 }
 
+/**
+ * Token guarding the domain-event stream - integration review R7/R9.
+ *
+ * Separate from the admin token on purpose. An enterprise event consumer needs to read
+ * service requests, orders and escalations for a property; it has no business being able to
+ * rebind a device to a room. Sharing one token would make "subscribe to events" and "take
+ * over any room" the same grant.
+ */
+const EVENT_TOKEN =
+  process.env.WOOHOO_EVENT_TOKEN?.trim() || 'evt_' + randomBytes(12).toString('hex');
+export const eventTokenIsGenerated = !process.env.WOOHOO_EVENT_TOKEN?.trim();
+
+/** The event-stream token, for startup logging and the console. Never sent to the model. */
+export function eventToken(): string {
+  return EVENT_TOKEN;
+}
+
 /** The seeded property. Everything is single-property until a second one exists to test with. */
 const DEFAULT_PROPERTY = process.env.WOOHOO_PROPERTY_ID?.trim() || 'p_blr_whitefield';
+
+/** Scope an event subscription from the query string. Absent means unfiltered. */
+function eventScopeFrom(url: URL): { tenantId?: string; propertyId?: string; types?: EventType[] } {
+  const types = url.searchParams.get('types');
+  return {
+    tenantId: url.searchParams.get('tenantId') ?? undefined,
+    propertyId: url.searchParams.get('propertyId') ?? undefined,
+    types: types
+      ? (types.split(',').map((t) => t.trim()).filter(Boolean) as EventType[])
+      : undefined,
+  };
+}
 
 /** Read a bounded request body. A transcript is a sentence and a room is a small object. */
 async function readBody(req: IncomingMessage, limit = 16_384): Promise<string> {
@@ -95,6 +131,8 @@ export class DeviceGateway {
   private wss?: WebSocketServer;
   private http?: Server;
   private heartbeat?: NodeJS.Timeout;
+  /** Device identity policy (review R9). Resolved once at construction. */
+  private readonly identity: DeviceIdentityOptions = identityOptionsFromEnv();
 
   constructor(private readonly opts: GatewayOptions) {}
 
@@ -107,7 +145,9 @@ export class DeviceGateway {
       // port is asking for a firewall change nobody will make.
       this.http = createServer((req, res) => void this.onHttp(req, res));
       this.wss = new WebSocketServer({ server: this.http });
-      this.wss.on('connection', (ws) => this.onConnection(ws));
+      // The upgrade request is carried through: it holds the headers the TLS terminator
+      // writes the verified client-certificate serial into (review R9).
+      this.wss.on('connection', (ws, req) => this.onConnection(ws, req));
 
       this.http.listen(requested, () => {
         const addr = this.http!.address();
@@ -176,6 +216,27 @@ export class DeviceGateway {
       // capability-level logging hides it completely.
       vendorCalls: result.vendorCalls,
     };
+  }
+
+  /**
+   * Bearer check for the event endpoints. Returns false once it has answered 401, so a caller
+   * reads as `if (!this.authoriseEventConsumer(req, json)) return;`.
+   */
+  private authoriseEventConsumer(
+    req: IncomingMessage,
+    json: (status: number, body: unknown) => void,
+  ): boolean {
+    const header = (req.headers.authorization as string | undefined) ?? '';
+    const supplied = header.replace(/^Bearer[ ]+/i, '').trim();
+    if (supplied !== EVENT_TOKEN) {
+      json(401, {
+        error: 'UNAUTHORISED',
+        detail: 'Send the event token as an Authorization Bearer header. It is printed in the '
+          + 'service logs at startup and is deliberately not the admin token.',
+      });
+      return false;
+    }
+    return true;
   }
 
   /** Push a turn to every live-feed subscriber. Never allowed to break the turn itself. */
@@ -382,6 +443,84 @@ export class DeviceGateway {
       return;
     }
 
+    // ── domain-event delivery (review R7) ─────────────────────────────────
+    // Deliberately a different path, token and shape from /v1/events above. That one is the
+    // console's live view of turns. This is the business-event contract: an enterprise
+    // consumer subscribes here for service requests, orders and escalations, and needs to
+    // answer "what happened while I was disconnected" rather than "what is happening now".
+    if (req.method === 'GET' && url.pathname === '/v1/events/domain') {
+      if (!this.authoriseEventConsumer(req, json)) return;
+
+      const journal = this.opts.app.eventJournal;
+      const scope = eventScopeFrom(url);
+      // Last-Event-ID is what EventSource resends on its own reconnect; ?since= is for
+      // consumers that persist their position and restart from it.
+      const resume = Number(
+        (req.headers['last-event-id'] as string | undefined) ?? url.searchParams.get('since') ?? 0,
+      );
+
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      const NL = String.fromCharCode(10);
+      const frame = (lines: string[]) => {
+        try { res.write(lines.join(NL) + NL + NL); } catch { /* consumer gone */ }
+      };
+      const deliver = (seq: number, event: unknown, type: string) =>
+        frame(['id: ' + seq, 'event: ' + type, 'data: ' + JSON.stringify(event)]);
+
+      frame(['retry: 2000']);
+
+      const backlog = journal.since(resume, scope);
+      // Told before it is handed anything, because the alternative to an explicit gap is
+      // silently dropping a guest's request and looking healthy while doing it.
+      if (backlog.missed > 0) {
+        frame([
+          'event: woohoo.stream.gap',
+          'data: ' + JSON.stringify({
+            missed: backlog.missed,
+            requestedFrom: resume,
+            oldestRetainedSeq: journal.oldestRetainedSeq,
+            detail: 'Events in this range are no longer retained. Reconcile from the '
+              + 'authoritative store before trusting later events.',
+          }),
+        ]);
+      }
+      for (const e of backlog.entries) deliver(e.seq, e.event, e.event.type);
+
+      const stop = journal.listen((e) => deliver(e.seq, e.event, e.event.type), scope);
+      const keepalive = setInterval(() => {
+        try { res.write(': keepalive' + NL + NL); } catch { /* consumer gone */ }
+      }, 20_000);
+      keepalive.unref?.();
+      req.on('close', () => { clearInterval(keepalive); stop(); });
+      return;
+    }
+
+    // Pull-based replay for consumers that would rather poll than hold a stream open, and
+    // the endpoint to call after a restart to find out what was missed.
+    if (req.method === 'GET' && url.pathname === '/v1/events/domain/replay') {
+      if (!this.authoriseEventConsumer(req, json)) return;
+      const journal = this.opts.app.eventJournal;
+      const since = Number(url.searchParams.get('since') ?? 0);
+      const limit = Math.min(Number(url.searchParams.get('limit') ?? 100), 500);
+      const result = journal.since(since, eventScopeFrom(url));
+      const page = result.entries.slice(0, limit);
+      json(200, {
+        events: page.map((e) => ({ seq: e.seq, ...e.event })),
+        missed: result.missed,
+        latestSeq: result.latestSeq,
+        oldestRetainedSeq: journal.oldestRetainedSeq,
+        // Position to send as ?since= next time. The last delivered seq, not latestSeq,
+        // so a truncated page is resumed rather than skipped.
+        nextSince: page.length ? page[page.length - 1]!.seq : since,
+        more: result.entries.length > page.length,
+      });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/health') {
       json(200, {
         status: 'ok',
@@ -395,6 +534,8 @@ export class DeviceGateway {
         // simulator looks identical to one driving real hardware until someone walks
         // into the room and finds the lights did not move.
         adapter: this.opts.app.adapter.vendor,
+        // Surfaced so a deployment cannot quietly run with device auth off (review R9).
+        deviceAuth: this.identity.required ? 'required' : 'disabled',
       });
       return;
     }
@@ -403,6 +544,59 @@ export class DeviceGateway {
     // Deliberately not on the MCP tool surface: anything the agent can call is something it
     // can be argued into calling, and "make a room with every capability and bind my device"
     // is exactly what an attacker would ask for.
+    // Stay teardown (review R7, R8). Inbound from whoever owns the PMS integration, because
+    // agentic has no way to observe a checkout itself. Admin-guarded: it deletes guest data
+    // and releases the room's conversation state, so it is not something an event consumer
+    // should be able to trigger with a read token.
+    if (req.method === 'POST' && url.pathname === '/v1/admin/stays/checkout') {
+      const supplied = (req.headers['x-admin-token'] as string | undefined)?.trim();
+      if (supplied !== ADMIN_TOKEN) {
+        json(401, {
+          error: 'UNAUTHORISED',
+          detail: 'Send the admin token in the x-admin-token header.',
+        });
+        return;
+      }
+      let parsedBody: unknown;
+      try {
+        parsedBody = JSON.parse(await readBody(req));
+      } catch {
+        json(400, { error: 'BAD_JSON', detail: 'Body must be a JSON object.' });
+        return;
+      }
+      const checkoutReq = StayCheckoutSchema.safeParse(parsedBody);
+      if (!checkoutReq.success) {
+        json(400, {
+          error: 'INVALID',
+          detail: checkoutReq.error.issues.map((i) => i.message).join('; '),
+        });
+        return;
+      }
+      const v = checkoutReq.data;
+      try {
+        // A deviceId is preferred because its room binding is verified on resolve. A room
+        // with no enrolled device still has to be purgeable, hence the explicit triple.
+        const scope = v.deviceId
+          ? (await this.opts.app.catalog.resolveDevice(v.deviceId)).scope
+          : {
+              tenantId: v.tenantId!,
+              propertyId: v.propertyId!,
+              roomId: v.roomId!,
+              deviceId: 'unbound',
+            };
+        json(200, await this.opts.app.checkout.checkout(scope, {
+          stayRef: v.stayRef,
+          checkedOutAt: v.checkedOutAt,
+        }));
+      } catch (err) {
+        json(404, {
+          error: 'ROOM_UNRESOLVED',
+          detail: String(err instanceof Error ? err.message : err),
+        });
+      }
+      return;
+    }
+
     if (url.pathname === '/v1/admin/rooms') {
       const supplied = (req.headers['x-admin-token'] as string | undefined)?.trim();
       if (supplied !== ADMIN_TOKEN) {
@@ -498,6 +692,16 @@ export class DeviceGateway {
         return;
       }
 
+      // Identity before work (review R9). The device record is read directly rather than
+      // through resolveDevice, because a serial mismatch must be refused before a turn is
+      // broadcast as received - an observer seeing a rejected turn start is confusing.
+      const claimant = await this.opts.app.catalogRepo.getDevice(body.deviceId);
+      const verdict = verifyDeviceIdentity(req, claimant, this.identity);
+      if (!verdict.ok) {
+        json(verdict.status, { error: verdict.error, detail: verdict.detail });
+        return;
+      }
+
       try {
         // Announce arrival before doing the work, so an observer sees the request land and
         // sees it running rather than only learning about it once it is already over.
@@ -537,7 +741,7 @@ export class DeviceGateway {
     return this.connections.size;
   }
 
-  private onConnection(ws: WebSocket): void {
+  private onConnection(ws: WebSocket, upgrade?: IncomingMessage): void {
     ws.on('pong', () => {
       const c = this.connections.get(ws);
       if (c) {
@@ -547,7 +751,7 @@ export class DeviceGateway {
     });
 
     ws.on('message', (raw) => {
-      void this.onMessage(ws, raw.toString());
+      void this.onMessage(ws, raw.toString(), upgrade);
     });
 
     ws.on('close', () => this.connections.delete(ws));
@@ -558,7 +762,11 @@ export class DeviceGateway {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   }
 
-  private async onMessage(ws: WebSocket, raw: string): Promise<void> {
+  private async onMessage(
+    ws: WebSocket,
+    raw: string,
+    upgrade?: IncomingMessage,
+  ): Promise<void> {
     let msg: ClientMessage;
     try {
       msg = JSON.parse(raw) as ClientMessage;
@@ -573,7 +781,7 @@ export class DeviceGateway {
     }
 
     if (msg.type === 'hello') {
-      await this.onHello(ws, msg);
+      await this.onHello(ws, msg, upgrade);
       return;
     }
 
@@ -599,11 +807,32 @@ export class DeviceGateway {
     }
   }
 
-  private async onHello(ws: WebSocket, msg: Extract<ClientMessage, { type: 'hello' }>): Promise<void> {
+  private async onHello(
+    ws: WebSocket,
+    msg: Extract<ClientMessage, { type: 'hello' }>,
+    upgrade?: IncomingMessage,
+  ): Promise<void> {
     try {
       // In production the device identity comes from the validated mTLS client certificate,
       // not from the frame. The resolution below is the same either way — this is the single
       // point where device_id becomes {tenant, property, room} (§7, P2).
+      //
+      // The announced serial is checked against the record before resolution (review R9):
+      // previously it was accepted and discarded, so a device presenting a serial belonging
+      // to another room was indistinguishable from a correctly provisioned one.
+      const claimant = await this.opts.app.catalogRepo.getDevice(msg.deviceId);
+      const verdict = verifyDeviceIdentity(
+        upgrade ?? { headers: {} },
+        claimant,
+        this.identity,
+        msg.certificateSerial,
+      );
+      if (!verdict.ok) {
+        this.send(ws, { type: 'error', code: verdict.error, detail: verdict.detail });
+        ws.close();
+        return;
+      }
+
       const resolved = await this.opts.app.catalog.resolveDevice(msg.deviceId);
 
       this.connections.set(ws, {
